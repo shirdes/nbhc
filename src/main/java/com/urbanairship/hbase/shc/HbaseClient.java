@@ -8,6 +8,7 @@ import com.urbanairship.hbase.shc.operation.VoidResponseParser;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.MultiAction;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
@@ -21,15 +22,7 @@ public class HbaseClient {
 
     private static final Class<? extends VersionedProtocol> TARGET_PROTOCOL = HRegionInterface.class;
 
-    private static final Method GET_TARGET_METHOD;
-    static {
-        try {
-            GET_TARGET_METHOD = HRegionServer.class.getMethod("get", byte[].class, Get.class);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException("Unable to load target method for 'get' operation", e);
-        }
-    }
-
+    private static final Method GET_TARGET_METHOD = loadTargetMethod("get", new Class[]{byte[].class, Get.class});
     private static final Function<HbaseObjectWritable, Result> GET_RESPONSE_PARSER = new Function<HbaseObjectWritable, Result>() {
         @Override
         public Result apply(HbaseObjectWritable value) {
@@ -43,27 +36,22 @@ public class HbaseClient {
         }
     };
 
-    private static final Method PUT_TARGET_METHOD;
-    static {
-        try {
-            PUT_TARGET_METHOD = HRegionServer.class.getMethod("put", byte[].class, Put.class);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException("Unable to load target method for 'put' operation", e);
-        }
-    }
-
+    private static final Method PUT_TARGET_METHOD = loadTargetMethod("put", new Class[]{byte[].class, Put.class});
     private static final Function<HbaseObjectWritable, Void> PUT_RESPONSE_PARSER = new VoidResponseParser("put");
 
-    private static final Method DELETE_TARGET_METHOD;
-    static {
+    private static final Method DELETE_TARGET_METHOD = loadTargetMethod("delete", new Class[]{byte[].class, Delete.class});
+    private static final Function<HbaseObjectWritable, Void> DELETE_RESPONSE_PARSER = new VoidResponseParser("delete");
+
+    private static final Method MULTI_ACTION_TARGET_METHOD = loadTargetMethod("multi", new Class[]{MultiAction.class});
+
+    private static Method loadTargetMethod(String methodName, Class<?>[] params) {
         try {
-            DELETE_TARGET_METHOD = HRegionServer.class.getMethod("delete", byte[].class, Delete.class);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException("Unable to load target method for 'delete' operation", e);
+            return HRegionServer.class.getMethod(methodName, params);
+        }
+        catch (NoSuchMethodException e) {
+            throw new RuntimeException(String.format("Unable to load target method for '%s' operation", methodName));
         }
     }
-
-    private static final Function<HbaseObjectWritable, Void> DELETE_RESPONSE_PARSER = new VoidResponseParser("delete");
 
     private final RegionServerDispatcher dispatcher;
     private final RegionOwnershipTopology topology;
