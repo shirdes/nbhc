@@ -1,6 +1,7 @@
 package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Function;
+import com.google.common.base.Functions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
@@ -115,12 +116,7 @@ public class HbaseClient {
 
         // TODO: don't like this....
         ListenableFuture<List<Void>> merged = Futures.allAsList(futures);
-        return Futures.transform(merged, new Function<List<Void>, Void>() {
-            @Override
-            public Void apply(List<Void> input) {
-                return null;
-            }
-        });
+        return Futures.transform(merged, Functions.<Void>constant(null));
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
