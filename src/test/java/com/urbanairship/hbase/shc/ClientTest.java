@@ -4,6 +4,7 @@ import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.urbanairship.hbase.environment.HBaseEnvironment;
@@ -14,6 +15,7 @@ import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
 import org.apache.commons.configuration.MapConfiguration;
+import org.apache.commons.lang.math.RandomUtils;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -26,6 +28,7 @@ import org.junit.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -152,7 +155,7 @@ public class ClientTest {
     }
 
     @Test
-    public void testMultiPut() throws Exception {
+    public void testMulti() throws Exception {
         Map<String, String> entries = Maps.newHashMap();
         for (int i = 0; i < 10; i++) {
             entries.put(randomAlphanumeric(10), randomAlphanumeric(5));
@@ -177,6 +180,35 @@ public class ClientTest {
 
             assertNotNull(result);
             assertEquals(entry.getValue(), Bytes.toString(result.getValue(FAMILY, COL)));
+        }
+
+        List<String> rows = Lists.newArrayList(entries.keySet());
+        List<Delete> deletes = Lists.newArrayList();
+
+        Set<String> removed = Sets.newHashSet();
+        for (int i = 0; i < 3; i++) {
+            int idx = RandomUtils.nextInt(rows.size());
+            String row = rows.get(idx);
+            deletes.add(new Delete(Bytes.toBytes(row), System.currentTimeMillis() + 1L, null));
+
+            removed.add(row);
+        }
+
+        ListenableFuture<Void> deleteFuture = client.multiDelete(TABLE, deletes);
+        deleteFuture.get();
+
+        for (Map.Entry<String, String> entry : entries.entrySet()) {
+            Get get = new Get(Bytes.toBytes(entry.getKey()));
+
+            ListenableFuture<Result> getFuture = client.get(TABLE, get);
+            Result result = getFuture.get();
+
+            if (removed.contains(entry.getKey())) {
+                assertTrue(result.isEmpty());
+            }
+            else {
+                assertEquals(entry.getValue(), Bytes.toString(result.getValue(FAMILY, COL)));
+            }
         }
     }
 }
