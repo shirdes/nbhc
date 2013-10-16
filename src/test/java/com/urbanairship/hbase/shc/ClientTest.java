@@ -2,6 +2,9 @@ package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.urbanairship.hbase.environment.HBaseEnvironment;
 import com.urbanairship.hbase.managers.Schemas;
@@ -11,7 +14,6 @@ import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
 import org.apache.commons.configuration.MapConfiguration;
-import org.apache.commons.lang.RandomStringUtils;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -22,13 +24,16 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
+import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
+import static org.junit.Assert.*;
 
 public class ClientTest {
 
@@ -113,9 +118,9 @@ public class ClientTest {
     }
 
     @Test
-    public void testName() throws Exception {
-        String row = RandomStringUtils.randomAlphabetic(10);
-        String value = RandomStringUtils.randomAlphabetic(5);
+    public void testSingleCrud() throws Exception {
+        String row = randomAlphabetic(10);
+        String value = randomAlphabetic(5);
 
         Put put = new Put(Bytes.toBytes(row), System.currentTimeMillis());
         put.add(FAMILY, COL, Bytes.toBytes(value));
@@ -144,5 +149,34 @@ public class ClientTest {
         result = future.get();
 
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void testMultiPut() throws Exception {
+        Map<String, String> entries = Maps.newHashMap();
+        for (int i = 0; i < 10; i++) {
+            entries.put(randomAlphanumeric(10), randomAlphanumeric(5));
+        }
+
+        List<Put> puts = Lists.newArrayList();
+        for (Map.Entry<String, String> entry : entries.entrySet()) {
+            Put put = new Put(Bytes.toBytes(entry.getKey()), System.currentTimeMillis());
+            put.add(FAMILY, COL, Bytes.toBytes(entry.getValue()));
+
+            puts.add(put);
+        }
+
+        ListenableFuture<Void> future = client.multiPut(TABLE, puts);
+        future.get();
+
+        for (Map.Entry<String, String> entry : entries.entrySet()) {
+            Get get = new Get(Bytes.toBytes(entry.getKey()));
+
+            ListenableFuture<Result> getFuture = client.get(TABLE, get);
+            Result result = getFuture.get();
+
+            assertNotNull(result);
+            assertEquals(entry.getValue(), Bytes.toString(result.getValue(FAMILY, COL)));
+        }
     }
 }

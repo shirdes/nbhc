@@ -4,11 +4,11 @@ import com.google.common.base.Function;
 import com.google.common.util.concurrent.AbstractFuture;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 
-public final class HbaseOperationFuture<R> extends AbstractFuture<R> implements ResponseCallback {
+public final class SimpleResponseParsingHbaseOperationFuture<R> extends AbstractFuture<R> implements ResponseCallback {
 
     private final Function<HbaseObjectWritable, R> responseValueParser;
 
-    public HbaseOperationFuture(Function<HbaseObjectWritable, R> responseValueParser) {
+    public SimpleResponseParsingHbaseOperationFuture(Function<HbaseObjectWritable, R> responseValueParser) {
         this.responseValueParser = responseValueParser;
     }
 
