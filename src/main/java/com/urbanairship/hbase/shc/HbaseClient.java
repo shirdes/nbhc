@@ -75,13 +75,13 @@ public class HbaseClient {
         // TODO: response from the server indicating that the row is not there and then we need to lookup the
         // TODO: region again and retry...
 
-        return makeRegionPlusParamRequest(GET_TARGET_METHOD, location, get, GET_RESPONSE_PARSER);
+        return makeSingleMutationRequest(GET_TARGET_METHOD, location, get, GET_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
         HRegionLocation location = topology.getRegionServer(table, put.getRow());
 
-        return makeRegionPlusParamRequest(PUT_TARGET_METHOD, location, put, PUT_RESPONSE_PARSER);
+        return makeSingleMutationRequest(PUT_TARGET_METHOD, location, put, PUT_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
@@ -122,7 +122,7 @@ public class HbaseClient {
     public ListenableFuture<Void> delete(String table, Delete delete) {
         HRegionLocation location = topology.getRegionServer(table, delete.getRow());
 
-        return makeRegionPlusParamRequest(DELETE_TARGET_METHOD, location, delete, DELETE_RESPONSE_PARSER);
+        return makeSingleMutationRequest(DELETE_TARGET_METHOD, location, delete, DELETE_RESPONSE_PARSER);
     }
 
     private static class MultiPutHbaseOperationFuture extends AbstractFuture<Void> implements ResponseCallback {
@@ -162,10 +162,10 @@ public class HbaseClient {
         }
     }
 
-    private <P, R> ListenableFuture<R> makeRegionPlusParamRequest(Method targetMethod,
-                                                                  HRegionLocation location,
-                                                                  P param,
-                                                                  Function<HbaseObjectWritable, R> responseParser) {
+    private <P, R> ListenableFuture<R> makeSingleMutationRequest(Method targetMethod,
+                                                                 HRegionLocation location,
+                                                                 P param,
+                                                                 Function<HbaseObjectWritable, R> responseParser) {
         SimpleResponseParsingHbaseOperationFuture<R> future =
                 new SimpleResponseParsingHbaseOperationFuture<R>(responseParser);
 
