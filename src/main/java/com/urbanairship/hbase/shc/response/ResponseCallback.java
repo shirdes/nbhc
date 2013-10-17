@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.dispatch;
+package com.urbanairship.hbase.shc.response;
 
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 
@@ -6,6 +6,6 @@ public interface ResponseCallback {
 
     void receiveResponse(HbaseObjectWritable value);
 
-    void receiveError(Throwable e);
+    void receiveError(ResponseError responseError);
 
 }

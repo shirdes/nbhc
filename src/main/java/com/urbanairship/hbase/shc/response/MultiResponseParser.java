@@ -1,18 +1,21 @@
-package com.urbanairship.hbase.shc.dispatch;
+package com.urbanairship.hbase.shc.response;
 
-import com.google.common.util.concurrent.AbstractFuture;
+import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import org.apache.hadoop.hbase.client.MultiResponse;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.util.Pair;
+import org.apache.hadoop.ipc.RemoteException;
 
 import java.util.List;
 import java.util.Map;
 
-public final class MultiMutationHbaseOperationFuture extends AbstractFuture<Void> implements ResponseCallback {
+public final class MultiResponseParser implements ResponseCallback {
 
+    private final ResultBroker<?> broker;
     private final String operationName;
 
-    public MultiMutationHbaseOperationFuture(String operationName) {
+    public MultiResponseParser(ResultBroker<?> broker, String operationName) {
+        this.broker = broker;
         this.operationName = operationName;
     }
 
@@ -20,7 +23,7 @@ public final class MultiMutationHbaseOperationFuture extends AbstractFuture<Void
     public void receiveResponse(HbaseObjectWritable value) {
         Object result = value.get();
         if (!(result instanceof MultiResponse)) {
-            setException(new RuntimeException(String.format("Expected response value of %s but received %s for 'multi %s' operation",
+            broker.communicateError(new RuntimeException(String.format("Expected response value of %s but received %s for 'multi %s' operation",
                     MultiResponse.class.getName(), result.getClass().getName(), operationName)));
             return;
         }
@@ -39,14 +42,18 @@ public final class MultiMutationHbaseOperationFuture extends AbstractFuture<Void
 
         if (failed) {
             // TODO: would be good to have the exceptions that occurred?
-            setException(new RuntimeException(String.format("Errors detected in response of 'multi %s' operation", operationName)));
+            broker.communicateError(new RuntimeException(String.format("Errors detected in response of 'multi %s' operation", operationName)));
         }
 
-        set(null);
+        broker.communicateResult(null);
     }
 
     @Override
-    public void receiveError(Throwable e) {
-        setException(e);
+    public void receiveError(ResponseError responseError) {
+        // TODO: better error handling
+        broker.communicateError(new RemoteException(responseError.getErrorClass(),
+                responseError.getErrorMessage().isPresent()
+                    ? responseError.getErrorMessage().get()
+                    : ""));
     }
 }

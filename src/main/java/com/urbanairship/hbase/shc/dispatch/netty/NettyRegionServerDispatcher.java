@@ -3,7 +3,7 @@ package com.urbanairship.hbase.shc.dispatch.netty;
 import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.Request;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
-import com.urbanairship.hbase.shc.dispatch.ResponseCallback;
+import com.urbanairship.hbase.shc.response.ResponseCallback;
 import com.urbanairship.hbase.shc.operation.Operation;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;

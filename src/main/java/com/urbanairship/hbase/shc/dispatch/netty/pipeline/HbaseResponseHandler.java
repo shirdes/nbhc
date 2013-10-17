@@ -2,8 +2,8 @@ package com.urbanairship.hbase.shc.dispatch.netty.pipeline;
 
 import com.google.common.base.Optional;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
-import com.urbanairship.hbase.shc.dispatch.Response;
-import com.urbanairship.hbase.shc.dispatch.ResponseCallback;
+import com.urbanairship.hbase.shc.response.Response;
+import com.urbanairship.hbase.shc.response.ResponseCallback;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.jboss.netty.channel.ChannelHandlerContext;

@@ -1,6 +1,7 @@
 package com.urbanairship.hbase.shc.dispatch;
 
 import com.google.common.base.Optional;
+import com.urbanairship.hbase.shc.response.ResponseCallback;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;

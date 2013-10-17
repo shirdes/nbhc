@@ -7,11 +7,13 @@ import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.urbanairship.hbase.shc.dispatch.MultiMutationHbaseOperationFuture;
+import com.urbanairship.hbase.shc.response.ResponseError;
+import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
-import com.urbanairship.hbase.shc.dispatch.SimpleResponseParsingHbaseOperationFuture;
 import com.urbanairship.hbase.shc.operation.Operation;
 import com.urbanairship.hbase.shc.operation.VoidResponseParser;
+import com.urbanairship.hbase.shc.response.MultiResponseParser;
+import com.urbanairship.hbase.shc.response.ResponseCallback;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
@@ -19,6 +21,7 @@ import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.ipc.RemoteException;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -78,7 +81,6 @@ public class HbaseClient {
 
     public ListenableFuture<Void> put(String table, Put put) {
         HRegionLocation location = topology.getRegionServer(table, put.getRow());
-
         return makeSingleOperationRequest(PUT_TARGET_METHOD, location, put, PUT_RESPONSE_PARSER);
     }
 
@@ -88,7 +90,6 @@ public class HbaseClient {
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
         HRegionLocation location = topology.getRegionServer(table, delete.getRow());
-
         return makeSingleOperationRequest(DELETE_TARGET_METHOD, location, delete, DELETE_RESPONSE_PARSER);
     }
 
@@ -96,6 +97,7 @@ public class HbaseClient {
         return makeMultiMutationRequest(table, deletes, "delete");
     }
 
+    // TODO: this method sucks
     private <M extends Row> ListenableFuture<Void> makeMultiMutationRequest(String table,
                                                                             List<M> mutations,
                                                                             String operationName) {
@@ -115,7 +117,8 @@ public class HbaseClient {
 
         List<ListenableFuture<Void>> futures = Lists.newArrayList();
         for (HRegionLocation location : regionActions.keySet()) {
-            MultiMutationHbaseOperationFuture future = new MultiMutationHbaseOperationFuture(operationName);
+            HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>();
+            MultiResponseParser callback = new MultiResponseParser(future, operationName);
 
             MultiAction<M> action = regionActions.get(location);
             Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{action});
@@ -123,7 +126,7 @@ public class HbaseClient {
             Operation operation = new Operation(getHost(location), invocation);
 
             // TODO: going to need to hold these and ensure that we remove all the callbacks on timeout
-            int requestId = dispatcher.request(operation, future);
+            int requestId = dispatcher.request(operation, callback);
 
             futures.add(future);
         }
@@ -136,9 +139,31 @@ public class HbaseClient {
     private <P, R> ListenableFuture<R> makeSingleOperationRequest(Method targetMethod,
                                                                   HRegionLocation location,
                                                                   P param,
-                                                                  Function<HbaseObjectWritable, R> responseParser) {
-        SimpleResponseParsingHbaseOperationFuture<R> future =
-                new SimpleResponseParsingHbaseOperationFuture<R>(responseParser);
+                                                                  final Function<HbaseObjectWritable, R> responseParser) {
+
+        final HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>();
+        ResponseCallback callback = new ResponseCallback() {
+            @Override
+            public void receiveResponse(HbaseObjectWritable value) {
+                R response;
+                try {
+                    response = responseParser.apply(value);
+                }
+                catch (Exception e) {
+                    future.communicateError(e);
+                    return;
+                }
+
+                future.communicateResult(response);
+            }
+
+            @Override
+            public void receiveError(ResponseError errorResponse) {
+                // TODO; get smarter about the error handling
+                future.communicateError(new RemoteException(errorResponse.getErrorClass(),
+                        errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
+            }
+        };
 
         Invocation invocation = new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
                 location.getRegionInfo().getRegionName(),
@@ -150,7 +175,7 @@ public class HbaseClient {
         // TODO: should carry the request id into the future or have the future tell us when a timeout occurs
         // TODO: so the callback can be removed.  Kind of messy to bleed that all the way up here...
         // TODO: should find a way to do it lower or something
-        int requestId = dispatcher.request(operation, future);
+        int requestId = dispatcher.request(operation, callback);
 
         return future;
     }
