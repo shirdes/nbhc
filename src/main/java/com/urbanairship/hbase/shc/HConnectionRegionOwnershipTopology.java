@@ -16,12 +16,19 @@ public final class HConnectionRegionOwnershipTopology implements RegionOwnership
 
     @Override
     public HRegionLocation getRegionServer(String table, byte[] targetRow) {
+        return gethRegionLocationImpl(table, targetRow, false);
+    }
+
+    @Override
+    public HRegionLocation getRegionServerNoCache(String table, byte[] targetRow) {
+        return gethRegionLocationImpl(table, targetRow, true);
+    }
+
+    private HRegionLocation gethRegionLocationImpl(String table, byte[] targetRow, boolean skipCache) {
         byte[] tableBytes = table.getBytes(Charsets.UTF_8);
 
-        // TODO: the last parameter in the real client is set by tries != 0.  Probably need to do retries on
-        // TODO: trying to get the region location
         try {
-            return connection.getRegionLocation(tableBytes, targetRow, false);
+            return connection.getRegionLocation(tableBytes, targetRow, skipCache);
         }
         catch (IOException e) {
             throw new RuntimeException("Error locating region location for get operation", e);

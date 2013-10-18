@@ -3,7 +3,7 @@ package com.urbanairship.hbase.shc.operation;
 import com.google.common.net.HostAndPort;
 import org.apache.hadoop.hbase.ipc.Invocation;
 
-public class Operation {
+public final class Operation {
 
     private final HostAndPort targetHost;
     private final Invocation invocation;

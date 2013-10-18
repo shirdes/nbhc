@@ -109,7 +109,7 @@ public class ClientTest {
         channelProvider = new HostChannelProvider(clientBootstrap);
         NettyRegionServerDispatcher dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
 
-        client = new HbaseClient(dispatcher, topology);
+        client = new HbaseClient(dispatcher, topology, requestManager, 1);
     }
 
     @AfterClass

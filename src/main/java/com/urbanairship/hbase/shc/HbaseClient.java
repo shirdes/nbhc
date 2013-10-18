@@ -7,15 +7,24 @@ import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.urbanairship.hbase.shc.response.ResponseError;
 import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
+import com.urbanairship.hbase.shc.dispatch.RequestManager;
+import com.urbanairship.hbase.shc.dispatch.ResultBroker;
+import com.urbanairship.hbase.shc.operation.RpcRequestDetail;
 import com.urbanairship.hbase.shc.operation.Operation;
 import com.urbanairship.hbase.shc.operation.VoidResponseParser;
 import com.urbanairship.hbase.shc.response.MultiResponseParser;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
+import com.urbanairship.hbase.shc.response.ResponseError;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Action;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.MultiAction;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
@@ -64,24 +73,22 @@ public class HbaseClient {
 
     private final RegionServerDispatcher dispatcher;
     private final RegionOwnershipTopology topology;
+    private final RequestManager requestManager;
+    private final int maxRetries;
 
-    public HbaseClient(RegionServerDispatcher dispatcher, RegionOwnershipTopology topology) {
+    public HbaseClient(RegionServerDispatcher dispatcher, RegionOwnershipTopology topology, RequestManager requestManager, int maxRetries) {
         this.dispatcher = dispatcher;
         this.topology = topology;
+        this.requestManager = requestManager;
+        this.maxRetries = maxRetries;
     }
 
     public ListenableFuture<Result> get(String table, Get get) {
-        HRegionLocation location = topology.getRegionServer(table, get.getRow());
-        // TODO: think that this needs to be linked in a loop that retries in the case where we get some
-        // TODO: response from the server indicating that the row is not there and then we need to lookup the
-        // TODO: region again and retry...
-
-        return makeSingleOperationRequest(GET_TARGET_METHOD, location, get, GET_RESPONSE_PARSER);
+        return singleRowRequest(table, get, GET_TARGET_METHOD, GET_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
-        HRegionLocation location = topology.getRegionServer(table, put.getRow());
-        return makeSingleOperationRequest(PUT_TARGET_METHOD, location, put, PUT_RESPONSE_PARSER);
+        return singleRowRequest(table, put, PUT_TARGET_METHOD, PUT_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
@@ -89,12 +96,31 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
-        HRegionLocation location = topology.getRegionServer(table, delete.getRow());
-        return makeSingleOperationRequest(DELETE_TARGET_METHOD, location, delete, DELETE_RESPONSE_PARSER);
+        return singleRowRequest(table, delete, DELETE_TARGET_METHOD, DELETE_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
         return makeMultiMutationRequest(table, deletes, "delete");
+    }
+
+    private <P extends Row, R> ListenableFuture<R> singleRowRequest(String table,
+                                                                    P param,
+                                                                    Method targetMethod,
+                                                                    Function<HbaseObjectWritable, R> responseParser) {
+
+        HRegionLocation location = topology.getRegionServer(table, param.getRow());
+
+        RpcRequestDetail<P> request = RpcRequestDetail.<P>newBuilder()
+                .setTable(table)
+                .setTargetRow(param.getRow())
+                .setTargetMethod(targetMethod)
+                .setParam(param)
+                .build();
+
+        HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
+        makeSingleOperationRequest(request, location, responseParser, future, maxRetries);
+
+        return future;
     }
 
     // TODO: this method sucks
@@ -117,7 +143,7 @@ public class HbaseClient {
 
         List<ListenableFuture<Void>> futures = Lists.newArrayList();
         for (HRegionLocation location : regionActions.keySet()) {
-            HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>();
+            HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
             MultiResponseParser callback = new MultiResponseParser(future, operationName);
 
             MultiAction<M> action = regionActions.get(location);
@@ -136,12 +162,13 @@ public class HbaseClient {
         return Futures.transform(merged, Functions.<Void>constant(null));
     }
 
-    private <P, R> ListenableFuture<R> makeSingleOperationRequest(Method targetMethod,
-                                                                  HRegionLocation location,
-                                                                  P param,
-                                                                  final Function<HbaseObjectWritable, R> responseParser) {
+    private <P, R> void makeSingleOperationRequest(final RpcRequestDetail<P> requestDetail,
+                                                   HRegionLocation location,
+                                                   final Function<HbaseObjectWritable, R> responseParser,
+                                                   final ResultBroker<R> resultBroker,
+                                                   final int remainingRetries) {
 
-        final HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>();
+        // TODO: so much indent...
         ResponseCallback callback = new ResponseCallback() {
             @Override
             public void receiveResponse(HbaseObjectWritable value) {
@@ -150,24 +177,33 @@ public class HbaseClient {
                     response = responseParser.apply(value);
                 }
                 catch (Exception e) {
-                    future.communicateError(e);
+                    resultBroker.communicateError(e);
                     return;
                 }
 
-                future.communicateResult(response);
+                resultBroker.communicateResult(response);
             }
 
             @Override
             public void receiveError(ResponseError errorResponse) {
-                // TODO; get smarter about the error handling
-                future.communicateError(new RemoteException(errorResponse.getErrorClass(),
-                        errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
+                if (isRetryableError(errorResponse) && remainingRetries > 0) {
+                    HRegionLocation upToDateLocation = topology.getRegionServerNoCache(requestDetail.getTable(),
+                            requestDetail.getTargetRow());
+
+                    makeSingleOperationRequest(requestDetail, upToDateLocation, responseParser, resultBroker,
+                            remainingRetries - 1);
+                }
+                else {
+                    // TODO; get smarter about the error handling
+                    resultBroker.communicateError(new RemoteException(errorResponse.getErrorClass(),
+                            errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
+                }
             }
         };
 
-        Invocation invocation = new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
+        Invocation invocation = new Invocation(requestDetail.getTargetMethod(), TARGET_PROTOCOL, new Object[]{
                 location.getRegionInfo().getRegionName(),
-                param
+                requestDetail.getParam()
         });
 
         Operation operation = new Operation(getHost(location), invocation);
@@ -176,8 +212,11 @@ public class HbaseClient {
         // TODO: so the callback can be removed.  Kind of messy to bleed that all the way up here...
         // TODO: should find a way to do it lower or something
         int requestId = dispatcher.request(operation, callback);
+        resultBroker.setCurrentActiveRequestId(requestId);
+    }
 
-        return future;
+    private boolean isRetryableError(ResponseError errorResponse) {
+        return false;
     }
 
     private HostAndPort getHost(HRegionLocation location) {

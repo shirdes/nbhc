@@ -24,4 +24,8 @@ public class RequestManager {
         return Optional.fromNullable(responseCallbacks.remove(requestId));
     }
 
+    public void unregisterResponseCallback(int requestId) {
+        responseCallbacks.remove(requestId);
+    }
+
 }
