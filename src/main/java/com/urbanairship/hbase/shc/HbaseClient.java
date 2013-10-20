@@ -2,6 +2,7 @@ package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
@@ -11,30 +12,28 @@ import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
-import com.urbanairship.hbase.shc.operation.RpcRequestDetail;
 import com.urbanairship.hbase.shc.operation.Operation;
+import com.urbanairship.hbase.shc.operation.RpcRequestDetail;
 import com.urbanairship.hbase.shc.operation.VoidResponseParser;
 import com.urbanairship.hbase.shc.response.MultiResponseParser;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
 import com.urbanairship.hbase.shc.response.ResponseError;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.Action;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.MultiAction;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.ipc.RemoteException;
 
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class HbaseClient {
 
@@ -87,6 +86,84 @@ public class HbaseClient {
         return singleRowRequest(table, get, GET_TARGET_METHOD, GET_RESPONSE_PARSER);
     }
 
+    public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
+        Map<HRegionLocation, MultiAction<Get>> locationActions = groupByLocation(table, gets);
+
+        // TODO: this is a complete and total mess!
+        List<ListenableFuture<ImmutableMap<Integer, Result>>> futures = Lists.newArrayList();
+        for (HRegionLocation location : locationActions.keySet()) {
+            MultiAction<Get> multiAction = locationActions.get(location);
+
+            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
+            Operation operation = new Operation(getHost(location), invocation);
+
+            final HbaseOperationResultFuture<ImmutableMap<Integer, Result>> future =
+                    new HbaseOperationResultFuture<ImmutableMap<Integer, Result>>(requestManager);
+
+            final ConcurrentMap<Integer, Result> collectedResults = new ConcurrentHashMap<Integer, Result>();
+            ResponseCallback callback = new ResponseCallback() {
+                @Override
+                public void receiveResponse(HbaseObjectWritable value) {
+                    Object responseObject = value.get();
+                    if (!(responseObject instanceof MultiResponse)) {
+                        // TODO: should probably bomb out
+                        return;
+                    }
+
+                    MultiResponse response = (MultiResponse) responseObject;
+                    Map<Integer, Get> needRetry = Maps.newHashMap();
+                    for (List<Pair<Integer, Object>> pairs : response.getResults().values()) {
+                        for (Pair<Integer, Object> pair : pairs) {
+                            Object result = pair.getSecond();
+                            if (result == null || result instanceof Throwable) {
+                                // TODO: need to do a check to see if the error can be retried.  Shouldn't retry in the case of a DoNotRetryIOException
+                                needRetry.put(pair.getFirst(), gets.get(pair.getFirst()));
+                            }
+                            else if (result instanceof Result) {
+                                collectedResults.put(pair.getFirst(), (Result) result);
+                            }
+                            else {
+                                future.communicateError(new RuntimeException("Received unknown response object of type " +
+                                        result.getClass()));
+                                // TODO: this return is real deep.
+                                return;
+                            }
+                        }
+                    }
+
+                    if (needRetry.isEmpty()) {
+                        future.communicateResult(ImmutableMap.copyOf(collectedResults));
+                    }
+                }
+
+                @Override
+                public void receiveError(ResponseError responseError) {
+                    // TODO: check if the error is retryable and get smarter about what we return perhaps
+                    future.communicateError(new RemoteException(responseError.getErrorClass(),
+                            responseError.getErrorMessage().isPresent() ? responseError.getErrorMessage().get() : ""));
+                }
+            };
+
+            int requestId = dispatcher.request(operation, callback);
+            future.setCurrentActiveRequestId(requestId);
+
+            futures.add(future);
+        }
+
+        ListenableFuture<List<ImmutableMap<Integer, Result>>> all = Futures.allAsList(futures);
+        return Futures.transform(all, new Function<List<ImmutableMap<Integer,Result>>, List<Result>>() {
+            @Override
+            public List<Result> apply(List<ImmutableMap<Integer, Result>> collected) {
+                SortedMap<Integer, Result> merged = Maps.newTreeMap();
+                for (ImmutableMap<Integer, Result> batch : collected) {
+                    merged.putAll(batch);
+                }
+
+                return Lists.newArrayList(merged.values());
+            }
+        });
+    }
+
     public ListenableFuture<Void> put(String table, Put put) {
         return singleRowRequest(table, put, PUT_TARGET_METHOD, PUT_RESPONSE_PARSER);
     }
@@ -127,19 +204,8 @@ public class HbaseClient {
     private <M extends Row> ListenableFuture<Void> makeMultiMutationRequest(String table,
                                                                             List<M> mutations,
                                                                             String operationName) {
-        Map<HRegionLocation, MultiAction<M>> regionActions = Maps.newHashMap();
-        for (int i = 0; i < mutations.size(); i++) {
-            M mutation = mutations.get(i);
 
-            HRegionLocation location = topology.getRegionServer(table, mutation.getRow());
-            MultiAction<M> regionAction = regionActions.get(location);
-            if (regionAction == null) {
-                regionAction = new MultiAction<M>();
-                regionActions.put(location, regionAction);
-            }
-
-            regionAction.add(location.getRegionInfo().getRegionName(), new Action<M>(mutation, i));
-        }
+        Map<HRegionLocation, MultiAction<M>> regionActions = groupByLocation(table, mutations);
 
         List<ListenableFuture<Void>> futures = Lists.newArrayList();
         for (HRegionLocation location : regionActions.keySet()) {
@@ -153,6 +219,7 @@ public class HbaseClient {
 
             // TODO: going to need to hold these and ensure that we remove all the callbacks on timeout
             int requestId = dispatcher.request(operation, callback);
+            future.setCurrentActiveRequestId(requestId);
 
             futures.add(future);
         }
@@ -160,6 +227,25 @@ public class HbaseClient {
         // TODO: don't like this....
         ListenableFuture<List<Void>> merged = Futures.allAsList(futures);
         return Futures.transform(merged, Functions.<Void>constant(null));
+    }
+
+    private <O extends Row> Map<HRegionLocation, MultiAction<O>> groupByLocation(String table,
+                                                                                 List<O> operations) {
+        Map<HRegionLocation, MultiAction<O>> regionActions = Maps.newHashMap();
+        for (int i = 0; i < operations.size(); i++) {
+            O operation = operations.get(i);
+
+            HRegionLocation location = topology.getRegionServer(table, operation.getRow());
+            MultiAction<O> regionAction = regionActions.get(location);
+            if (regionAction == null) {
+                regionAction = new MultiAction<O>();
+                regionActions.put(location, regionAction);
+            }
+
+            regionAction.add(location.getRegionInfo().getRegionName(), new Action<O>(operation, i));
+        }
+
+        return regionActions;
     }
 
     private <P, R> void makeSingleOperationRequest(final RpcRequestDetail<P> requestDetail,

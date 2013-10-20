@@ -36,7 +36,8 @@ import java.util.concurrent.ThreadFactory;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
 import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class ClientTest {
 
@@ -157,7 +158,7 @@ public class ClientTest {
     @Test
     public void testMulti() throws Exception {
         Map<String, String> entries = Maps.newHashMap();
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 100; i++) {
             entries.put(randomAlphanumeric(10), randomAlphanumeric(5));
         }
 
@@ -172,14 +173,18 @@ public class ClientTest {
         ListenableFuture<Void> future = client.multiPut(TABLE, puts);
         future.get();
 
-        for (Map.Entry<String, String> entry : entries.entrySet()) {
-            Get get = new Get(Bytes.toBytes(entry.getKey()));
+        List<Get> gets = Lists.newArrayList();
+        for (String key : entries.keySet()) {
+            gets.add(new Get(Bytes.toBytes(key)));
+        }
 
-            ListenableFuture<Result> getFuture = client.get(TABLE, get);
-            Result result = getFuture.get();
+        ListenableFuture<List<Result>> getFuture = client.multiGet(TABLE, gets);
+        List<Result> results = getFuture.get();
 
-            assertNotNull(result);
-            assertEquals(entry.getValue(), Bytes.toString(result.getValue(FAMILY, COL)));
+        assertEquals(entries.size(), results.size());
+        for (Result result : results) {
+            String key = Bytes.toString(result.getRow());
+            assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
         }
 
         List<String> rows = Lists.newArrayList(entries.keySet());
@@ -197,17 +202,17 @@ public class ClientTest {
         ListenableFuture<Void> deleteFuture = client.multiDelete(TABLE, deletes);
         deleteFuture.get();
 
-        for (Map.Entry<String, String> entry : entries.entrySet()) {
-            Get get = new Get(Bytes.toBytes(entry.getKey()));
+        getFuture = client.multiGet(TABLE, gets);
+        results = getFuture.get();
 
-            ListenableFuture<Result> getFuture = client.get(TABLE, get);
-            Result result = getFuture.get();
-
-            if (removed.contains(entry.getKey())) {
+        assertEquals(entries.size(), results.size());
+        for (Result result : results) {
+            String key = Bytes.toString(result.getRow());
+            if (removed.contains(key)) {
                 assertTrue(result.isEmpty());
             }
             else {
-                assertEquals(entry.getValue(), Bytes.toString(result.getValue(FAMILY, COL)));
+                assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
             }
         }
     }
