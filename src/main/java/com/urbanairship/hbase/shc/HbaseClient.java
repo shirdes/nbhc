@@ -3,6 +3,7 @@ package com.urbanairship.hbase.shc;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
@@ -111,23 +112,23 @@ public class HbaseClient {
                     }
 
                     MultiResponse response = (MultiResponse) responseObject;
+
                     Map<Integer, Get> needRetry = Maps.newHashMap();
-                    for (List<Pair<Integer, Object>> pairs : response.getResults().values()) {
-                        for (Pair<Integer, Object> pair : pairs) {
-                            Object result = pair.getSecond();
-                            if (result == null || result instanceof Throwable) {
-                                // TODO: need to do a check to see if the error can be retried.  Shouldn't retry in the case of a DoNotRetryIOException
-                                needRetry.put(pair.getFirst(), gets.get(pair.getFirst()));
-                            }
-                            else if (result instanceof Result) {
-                                collectedResults.put(pair.getFirst(), (Result) result);
-                            }
-                            else {
-                                future.communicateError(new RuntimeException("Received unknown response object of type " +
-                                        result.getClass()));
-                                // TODO: this return is real deep.
-                                return;
-                            }
+                    Iterable<Pair<Integer, Object>> pairs = Iterables.concat(response.getResults().values());
+                    for (Pair<Integer, Object> pair : pairs) {
+                        Object result = pair.getSecond();
+                        if (result == null || result instanceof Throwable) {
+                            // TODO: need to do a check to see if the error can be retried.  Shouldn't retry in the case of a DoNotRetryIOException
+                            needRetry.put(pair.getFirst(), gets.get(pair.getFirst()));
+                        }
+                        else if (result instanceof Result) {
+                            collectedResults.put(pair.getFirst(), (Result) result);
+                        }
+                        else {
+                            future.communicateError(new RuntimeException("Received unknown response object of type " +
+                                    result.getClass()));
+                            // TODO: this return is real deep.
+                            return;
                         }
                     }
 

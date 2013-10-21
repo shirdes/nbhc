@@ -1,13 +1,11 @@
 package com.urbanairship.hbase.shc.response;
 
+import com.google.common.collect.Iterables;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import org.apache.hadoop.hbase.client.MultiResponse;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.ipc.RemoteException;
-
-import java.util.List;
-import java.util.Map;
 
 public final class MultiResponseParser implements ResponseCallback {
 
@@ -30,13 +28,12 @@ public final class MultiResponseParser implements ResponseCallback {
 
         boolean failed = false;
         MultiResponse response = (MultiResponse) result;
-        for (Map.Entry<byte[], List<Pair<Integer, Object>>> entry : response.getResults().entrySet()) {
-            for (Pair<Integer, Object> pair : entry.getValue()) {
-                // TODO: existing client will retry if the second is null or it's a Throwable but not a DNRIE
-                if (pair == null || (pair.getSecond() instanceof Throwable)) {
-                    failed = true;
-                    break;
-                }
+        Iterable<Pair<Integer, Object>> pairs = Iterables.concat(response.getResults().values());
+        for (Pair<Integer, Object> pair : pairs) {
+            // TODO: existing client will retry if the second is null or it's a Throwable but not a DNRIE
+            if (pair == null || (pair.getSecond() instanceof Throwable)) {
+                failed = true;
+                break;
             }
         }
 
