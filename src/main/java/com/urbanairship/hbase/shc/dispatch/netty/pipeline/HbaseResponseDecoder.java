@@ -4,8 +4,8 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Ints;
+import com.urbanairship.hbase.shc.response.RemoteError;
 import com.urbanairship.hbase.shc.response.Response;
-import com.urbanairship.hbase.shc.response.ResponseError;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.log4j.LogManager;
@@ -52,17 +52,16 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
         buffer.readInt();
 
         if (isErrorResponse) {
-            return Response.newError(requestId, readError(buffer));
+            return Response.newRemoteError(requestId, readError(buffer));
         }
 
         HbaseObjectWritable value;
         try {
             value = readResponseValue(buffer);
         }
-        catch (IOException e) {
-            // TODO: yucky
-            return Response.newError(requestId, new ResponseError(e.getClass().getName(),
-                    Optional.of("Error parsing response value as HbaseObjectWritable")));
+        catch (Exception e) {
+            return Response.newLocalError(requestId,
+                    new RuntimeException("Error parsing HbaseObjectWritable from binary response" + requestId, e));
         }
 
         return Response.newResponse(requestId, value);
@@ -77,11 +76,11 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
         return how;
     }
 
-    private ResponseError readError(ChannelBuffer buffer) {
+    private RemoteError readError(ChannelBuffer buffer) {
         String exceptionClass = readFramedString(buffer);
         String exceptionMessage = readFramedString(buffer);
 
-        return new ResponseError(exceptionClass, StringUtils.isNotBlank(exceptionMessage)
+        return new RemoteError(exceptionClass, StringUtils.isNotBlank(exceptionMessage)
             ? Optional.of(exceptionMessage) : Optional.<String>absent());
     }
 

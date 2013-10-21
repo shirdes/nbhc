@@ -2,7 +2,12 @@ package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.collect.*;
+import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -11,11 +16,22 @@ import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import com.urbanairship.hbase.shc.operation.Operation;
-import com.urbanairship.hbase.shc.operation.RpcRequestDetail;
 import com.urbanairship.hbase.shc.operation.VoidResponseParser;
-import com.urbanairship.hbase.shc.response.*;
+import com.urbanairship.hbase.shc.response.MultiResponseParser;
+import com.urbanairship.hbase.shc.response.RemoteError;
+import com.urbanairship.hbase.shc.response.ResponseCallback;
+import com.urbanairship.hbase.shc.response.ScannerBatchResult;
+import com.urbanairship.hbase.shc.response.ScannerResultStream;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Action;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.MultiAction;
+import org.apache.hadoop.hbase.client.MultiResponse;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
@@ -58,6 +74,22 @@ public class HbaseClient {
     private static final Method MULTI_ACTION_TARGET_METHOD = loadTargetMethod("multi", new Class[]{MultiAction.class});
 
     private static final Method OPEN_SCANNER_TARGET_METHOD = loadTargetMethod("openScanner", new Class[]{byte[].class, Scan.class});
+    private static final Function<HbaseObjectWritable, Long> OPEN_SCANNER_RESPONSE_PARSER = new Function<HbaseObjectWritable, Long>() {
+        @Override
+        public Long apply(HbaseObjectWritable value) {
+            Object object = value.get();
+            if (!(object instanceof Long)) {
+                throw new RuntimeException(String.format("Expected response value of %s but received %s for 'open scanner' operation",
+                        Long.class.getName(), object.getClass().getName()));
+            }
+
+            return (Long) object;
+        }
+    };
+
+    private static final Method CLOSE_SCANNER_TARGET_METHOD = loadTargetMethod("close", new Class[]{Long.TYPE});
+    private static final Function<HbaseObjectWritable, Void> CLOSE_SCANNER_RESPONSE_PARSER = new VoidResponseParser("close scanner");
+
     private static final Method SCANNER_NEXT_TARGET_METHOD = loadTargetMethod("next", new Class[]{Long.TYPE, Integer.TYPE});
 
     private static Method loadTargetMethod(String methodName, Class<?>[] params) {
@@ -136,7 +168,7 @@ public class HbaseClient {
                 }
 
                 @Override
-                public void receiveError(ResponseError responseError) {
+                public void receiveError(RemoteError responseError) {
                     // TODO: check if the error is retryable and get smarter about what we return perhaps
                     future.communicateError(new RemoteException(responseError.getErrorClass(),
                             responseError.getErrorMessage().isPresent() ? responseError.getErrorMessage().get() : ""));
@@ -186,6 +218,16 @@ public class HbaseClient {
         return null;
     }
 
+    private ListenableFuture<Long> openScanner(HRegionLocation location, String table, Scan scan) {
+        // TODO: implement
+        return null;
+    }
+
+    private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
+        // TODO: implement
+        return null;
+    }
+
     // TODO: don't like having a method with two numbers right next to each other as params. Perhaps next batch identifier object or something?
     private ListenableFuture<ScannerBatchResult> getScannerNextBatch(HRegionLocation location,
                                                                      long scannerId,
@@ -215,12 +257,12 @@ public class HbaseClient {
             }
 
             @Override
-            public void receiveError(ResponseError responseError) {
+            public void receiveError(RemoteError errorResponse) {
                 // TODO: stop sucking at the errors.
                 // TODO: gonna need to check for things like the region being offline or the scanner expiring and
                 // TODO:  in those cases do some retry logic
-                future.communicateError(new RemoteException(responseError.getErrorClass(),
-                        responseError.getErrorMessage().isPresent() ? responseError.getErrorMessage().get() : ""));
+                future.communicateError(new RemoteException(errorResponse.getErrorClass(),
+                        errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
             }
         };
 
@@ -232,22 +274,27 @@ public class HbaseClient {
         return future;
     }
 
-    private <P extends Row, R> ListenableFuture<R> singleRowRequest(String table,
-                                                                    P param,
+    private <P extends Row, R> ListenableFuture<R> singleRowRequest(final String table,
+                                                                    final P param,
                                                                     Method targetMethod,
                                                                     Function<HbaseObjectWritable, R> responseParser) {
 
         HRegionLocation location = topology.getRegionServer(table, param.getRow());
 
-        RpcRequestDetail<P> request = RpcRequestDetail.<P>newBuilder()
-                .setTable(table)
-                .setTargetRow(param.getRow())
-                .setTargetMethod(targetMethod)
-                .setParam(param)
-                .build();
-
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
-        makeSingleOperationRequest(request, location, responseParser, future, maxRetries);
+
+        Invocation invocation = new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
+                location.getRegionInfo().getRegionName(),
+                param
+        });
+
+        Operation operation = new Operation(getHost(location), invocation);
+        sendWithRetries(operation, responseParser, future, new Supplier<HRegionLocation>() {
+            @Override
+            public HRegionLocation get() {
+                return topology.getRegionServerNoCache(table, param.getRow());
+            }
+        });
 
         return future;
     }
@@ -300,65 +347,95 @@ public class HbaseClient {
         return regionActions;
     }
 
-    private <P, R> void makeSingleOperationRequest(final RpcRequestDetail<P> requestDetail,
-                                                   HRegionLocation location,
-                                                   final Function<HbaseObjectWritable, R> responseParser,
-                                                   final ResultBroker<R> resultBroker,
-                                                   final int remainingRetries) {
+    private <R> void sendWithRetries(final Operation operation,
+                                     final Function<HbaseObjectWritable, R> responseParser,
+                                     final ResultBroker<R> resultBroker,
+                                     final Supplier<HRegionLocation> updatedLocationSupplier) {
 
-        // TODO: so much indent...
-        ResponseCallback callback = new ResponseCallback() {
+        final SimpleResponseParsingResponseHandler<R> responseHandler =
+                new SimpleResponseParsingResponseHandler<R>(resultBroker, responseParser);
+
+        HbaseRemoteErrorHandler retryWithUpdatedLocationErrorHandler = new HbaseRemoteErrorHandler() {
             @Override
-            public void receiveResponse(HbaseObjectWritable value) {
-                R response;
-                try {
-                    response = responseParser.apply(value);
-                }
-                catch (Exception e) {
-                    resultBroker.communicateError(e);
-                    return;
-                }
+            public void handle(RemoteError error, int attempt) {
+                if (isRetryableError(error) && attempt <= maxRetries) {
+                    HRegionLocation updatedLocation = updatedLocationSupplier.get();
 
-                resultBroker.communicateResult(response);
-            }
-
-            @Override
-            public void receiveError(ResponseError errorResponse) {
-                if (isRetryableError(errorResponse) && remainingRetries > 0) {
-                    HRegionLocation upToDateLocation = topology.getRegionServerNoCache(requestDetail.getTable(),
-                            requestDetail.getTargetRow());
-
-                    makeSingleOperationRequest(requestDetail, upToDateLocation, responseParser, resultBroker,
-                            remainingRetries - 1);
+                    Operation retryOperation = new Operation(getHost(updatedLocation), operation.getInvocation());
+                    sendRequest(retryOperation, resultBroker, responseHandler, this, attempt + 1);
                 }
                 else {
                     // TODO; get smarter about the error handling
-                    resultBroker.communicateError(new RemoteException(errorResponse.getErrorClass(),
-                            errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
+                    resultBroker.communicateError(new RemoteException(error.getErrorClass(),
+                            error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
                 }
             }
         };
 
-        Invocation invocation = new Invocation(requestDetail.getTargetMethod(), TARGET_PROTOCOL, new Object[]{
-                location.getRegionInfo().getRegionName(),
-                requestDetail.getParam()
-        });
+        sendRequest(operation, resultBroker, responseHandler, retryWithUpdatedLocationErrorHandler, 1);
+    }
 
-        Operation operation = new Operation(getHost(location), invocation);
+    private void sendRequest(Operation operation,
+                             ResultBroker<?> resultBroker,
+                             final HbaseResponseHandler responseHandler,
+                             final HbaseRemoteErrorHandler remoteErrorHandler,
+                             final int attempt) {
 
-        // TODO: should carry the request id into the future or have the future tell us when a timeout occurs
-        // TODO: so the callback can be removed.  Kind of messy to bleed that all the way up here...
-        // TODO: should find a way to do it lower or something
+        ResponseCallback callback = new ResponseCallback() {
+            @Override
+            public void receiveResponse(HbaseObjectWritable value) {
+                responseHandler.handle(value);
+            }
+
+            @Override
+            public void receiveError(RemoteError remoteError) {
+                remoteErrorHandler.handle(remoteError, attempt);
+            }
+        };
+
         int requestId = dispatcher.request(operation, callback);
         resultBroker.setCurrentActiveRequestId(requestId);
     }
 
-    private boolean isRetryableError(ResponseError errorResponse) {
+    private boolean isRetryableError(RemoteError errorResponse) {
         return false;
     }
 
     private HostAndPort getHost(HRegionLocation location) {
         return HostAndPort.fromParts(location.getHostname(), location.getPort());
+    }
+
+    private static interface HbaseResponseHandler {
+        void handle(HbaseObjectWritable value);
+    }
+
+    private static final class SimpleResponseParsingResponseHandler<R> implements HbaseResponseHandler {
+
+        private final ResultBroker<R> resultBroker;
+        private final Function<HbaseObjectWritable, R> responseParser;
+
+        private SimpleResponseParsingResponseHandler(ResultBroker<R> resultBroker, Function<HbaseObjectWritable, R> responseParser) {
+            this.resultBroker = resultBroker;
+            this.responseParser = responseParser;
+        }
+
+        @Override
+        public void handle(HbaseObjectWritable value) {
+            R response;
+            try {
+                response = responseParser.apply(value);
+            }
+            catch (Exception e) {
+                resultBroker.communicateError(e);
+                return;
+            }
+
+            resultBroker.communicateResult(response);
+        }
+    }
+
+    private static interface HbaseRemoteErrorHandler {
+        void handle(RemoteError error, int attempt);
     }
 
 }

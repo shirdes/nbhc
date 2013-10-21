@@ -16,7 +16,7 @@ public final class ScannerBatchResult {
     private static final ScannerBatchResult FINISHED_RESULT =
             new ScannerBatchResult(Status.FINISHED, ImmutableList.<Result>of());
 
-    public static ScannerBatchResult resultsReturned(ImmutableList results) {
+    public static ScannerBatchResult resultsReturned(ImmutableList<Result> results) {
         return new ScannerBatchResult(Status.RESULTS_RETURNED, results);
     }
 

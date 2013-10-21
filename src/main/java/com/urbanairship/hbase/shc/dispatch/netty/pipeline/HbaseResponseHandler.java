@@ -36,11 +36,16 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
         }
 
         ResponseCallback callback = lookup.get();
-        if (response.getError().isPresent()) {
-            callback.receiveError(response.getError().get());
-        }
-        else if (response.getValue().isPresent()) {
-            callback.receiveResponse(response.getValue().get());
+        switch (response.getType()) {
+            case LOCAL_ERROR:
+                // TODO: receive error should probably take an exception object
+                break;
+            case REMOTE_ERROR:
+                callback.receiveError(response.getRemoteError());
+                break;
+            case VALUE:
+                callback.receiveResponse(response.getValue());
+                break;
         }
     }
 

@@ -4,12 +4,12 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang.StringUtils;
 
-public final class ResponseError {
+public final class RemoteError {
 
     private final String errorClass;
     private final Optional<String> errorMessage;
 
-    public ResponseError(String errorClass, Optional<String> errorMessage) {
+    public RemoteError(String errorClass, Optional<String> errorMessage) {
         Preconditions.checkArgument(StringUtils.isNotBlank(errorClass));
         this.errorClass = errorClass;
         this.errorMessage = Preconditions.checkNotNull(errorMessage);
@@ -28,7 +28,7 @@ public final class ResponseError {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
-        ResponseError that = (ResponseError) o;
+        RemoteError that = (RemoteError) o;
 
         if (!errorClass.equals(that.errorClass)) return false;
         if (!errorMessage.equals(that.errorMessage)) return false;
@@ -45,7 +45,7 @@ public final class ResponseError {
 
     @Override
     public String toString() {
-        return "ResponseError{" +
+        return "RemoteError{" +
                 "errorClass='" + errorClass + '\'' +
                 ", errorMessage=" + errorMessage +
                 '}';

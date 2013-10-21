@@ -46,11 +46,11 @@ public final class MultiResponseParser implements ResponseCallback {
     }
 
     @Override
-    public void receiveError(ResponseError responseError) {
+    public void receiveError(RemoteError remoteError) {
         // TODO: better error handling
-        broker.communicateError(new RemoteException(responseError.getErrorClass(),
-                responseError.getErrorMessage().isPresent()
-                    ? responseError.getErrorMessage().get()
+        broker.communicateError(new RemoteException(remoteError.getErrorClass(),
+                remoteError.getErrorMessage().isPresent()
+                    ? remoteError.getErrorMessage().get()
                     : ""));
     }
 }
