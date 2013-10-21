@@ -2,10 +2,7 @@ package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.google.common.collect.*;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -16,9 +13,7 @@ import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import com.urbanairship.hbase.shc.operation.Operation;
 import com.urbanairship.hbase.shc.operation.RpcRequestDetail;
 import com.urbanairship.hbase.shc.operation.VoidResponseParser;
-import com.urbanairship.hbase.shc.response.MultiResponseParser;
-import com.urbanairship.hbase.shc.response.ResponseCallback;
-import com.urbanairship.hbase.shc.response.ResponseError;
+import com.urbanairship.hbase.shc.response.*;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
@@ -61,6 +56,9 @@ public class HbaseClient {
     private static final Function<HbaseObjectWritable, Void> DELETE_RESPONSE_PARSER = new VoidResponseParser("delete");
 
     private static final Method MULTI_ACTION_TARGET_METHOD = loadTargetMethod("multi", new Class[]{MultiAction.class});
+
+    private static final Method OPEN_SCANNER_TARGET_METHOD = loadTargetMethod("openScanner", new Class[]{byte[].class, Scan.class});
+    private static final Method SCANNER_NEXT_TARGET_METHOD = loadTargetMethod("next", new Class[]{Long.TYPE, Integer.TYPE});
 
     private static Method loadTargetMethod(String methodName, Class<?>[] params) {
         try {
@@ -179,6 +177,59 @@ public class HbaseClient {
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
         return makeMultiMutationRequest(table, deletes, "delete");
+    }
+
+    public ScannerResultStream getScannerStream(String table, Scan scan) {
+        // TODO: ensure that the Scan object has a value set for caching?  Otherwise we'd have to have a default given
+        // TODO: to this client as a data member?
+
+        return null;
+    }
+
+    // TODO: don't like having a method with two numbers right next to each other as params. Perhaps next batch identifier object or something?
+    private ListenableFuture<ScannerBatchResult> getScannerNextBatch(HRegionLocation location,
+                                                                     long scannerId,
+                                                                     int numResults) {
+
+        final HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
+        ResponseCallback callback = new ResponseCallback() {
+            @Override
+            public void receiveResponse(HbaseObjectWritable value) {
+                Object object = value.get();
+                if (object == null) {
+                    future.communicateResult(ScannerBatchResult.finished());
+                    return;
+                }
+
+                if (!(object instanceof Result[])) {
+                    future.communicateError(new RuntimeException("Received result in scanner 'next' call that was not a Result[]"));
+                    return;
+                }
+
+                Result[] results = (Result[]) object;
+                ScannerBatchResult batchResult = (results.length == 0)
+                        ? ScannerBatchResult.noMoreResultsInRegion()
+                        : ScannerBatchResult.resultsReturned(ImmutableList.copyOf(results));
+
+                future.communicateResult(batchResult);
+            }
+
+            @Override
+            public void receiveError(ResponseError responseError) {
+                // TODO: stop sucking at the errors.
+                // TODO: gonna need to check for things like the region being offline or the scanner expiring and
+                // TODO:  in those cases do some retry logic
+                future.communicateError(new RemoteException(responseError.getErrorClass(),
+                        responseError.getErrorMessage().isPresent() ? responseError.getErrorMessage().get() : ""));
+            }
+        };
+
+        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId, numResults});
+        Operation operation = new Operation(getHost(location), invocation);
+        int requestId = dispatcher.request(operation, callback);
+        future.setCurrentActiveRequestId(requestId);
+
+        return future;
     }
 
     private <P extends Row, R> ListenableFuture<R> singleRowRequest(String table,
