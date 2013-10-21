@@ -36,8 +36,7 @@ import java.util.concurrent.ThreadFactory;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
 import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class ClientTest {
 
@@ -182,7 +181,11 @@ public class ClientTest {
         List<Result> results = getFuture.get();
 
         assertEquals(entries.size(), results.size());
-        for (Result result : results) {
+        for (int i = 0; i < results.size(); i++) {
+            Result result = results.get(i);
+
+            assertArrayEquals(gets.get(i).getRow(), result.getRow());
+
             String key = Bytes.toString(result.getRow());
             assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
         }
@@ -206,8 +209,18 @@ public class ClientTest {
         results = getFuture.get();
 
         assertEquals(entries.size(), results.size());
-        for (Result result : results) {
-            String key = Bytes.toString(result.getRow());
+        for (int i = 0; i < results.size(); i++) {
+            Result result = results.get(i);
+
+            String key;
+            if (result.isEmpty()) {
+                Get correspondingGet = gets.get(i);
+                key = Bytes.toString(correspondingGet.getRow());
+            }
+            else {
+                key = Bytes.toString(result.getRow());
+            }
+
             if (removed.contains(key)) {
                 assertTrue(result.isEmpty());
             }

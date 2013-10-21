@@ -151,7 +151,7 @@ public class HbaseClient {
         }
 
         ListenableFuture<List<ImmutableMap<Integer, Result>>> all = Futures.allAsList(futures);
-        return Futures.transform(all, new Function<List<ImmutableMap<Integer,Result>>, List<Result>>() {
+        return Futures.transform(all, new Function<List<ImmutableMap<Integer, Result>>, List<Result>>() {
             @Override
             public List<Result> apply(List<ImmutableMap<Integer, Result>> collected) {
                 SortedMap<Integer, Result> merged = Maps.newTreeMap();
