@@ -288,13 +288,21 @@ public class HbaseClient {
                 param
         });
 
-        Operation operation = new Operation(getHost(location), invocation);
-        sendWithRetries(operation, responseParser, future, new Supplier<HRegionLocation>() {
+        SimpleResponseParsingResponseHandler<R> responseHandler = new SimpleResponseParsingResponseHandler<R>(future, responseParser);
+
+        Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
             @Override
             public HRegionLocation get() {
                 return topology.getRegionServerNoCache(table, param.getRow());
             }
-        });
+        };
+
+        HbaseRemoteErrorHandler errorHandler = getRetryWithUpdatedLocationErrorHandler(invocation,
+                updatedLocationSupplier, future, responseHandler);
+
+        Operation operation = new Operation(getHost(location), invocation);
+
+        sendRequest(operation, future, responseHandler, errorHandler, 1);
 
         return future;
     }
@@ -347,21 +355,17 @@ public class HbaseClient {
         return regionActions;
     }
 
-    private <R> void sendWithRetries(final Operation operation,
-                                     final Function<HbaseObjectWritable, R> responseParser,
-                                     final ResultBroker<R> resultBroker,
-                                     final Supplier<HRegionLocation> updatedLocationSupplier) {
-
-        final SimpleResponseParsingResponseHandler<R> responseHandler =
-                new SimpleResponseParsingResponseHandler<R>(resultBroker, responseParser);
-
-        HbaseRemoteErrorHandler retryWithUpdatedLocationErrorHandler = new HbaseRemoteErrorHandler() {
+    private HbaseRemoteErrorHandler getRetryWithUpdatedLocationErrorHandler(final Invocation invocation,
+                                                                            final Supplier<HRegionLocation> updatedLocationSupplier,
+                                                                            final ResultBroker<?> resultBroker,
+                                                                            final HbaseResponseHandler responseHandler) {
+        return new HbaseRemoteErrorHandler() {
             @Override
             public void handle(RemoteError error, int attempt) {
                 if (isRetryableError(error) && attempt <= maxRetries) {
                     HRegionLocation updatedLocation = updatedLocationSupplier.get();
 
-                    Operation retryOperation = new Operation(getHost(updatedLocation), operation.getInvocation());
+                    Operation retryOperation = new Operation(getHost(updatedLocation), invocation);
                     sendRequest(retryOperation, resultBroker, responseHandler, this, attempt + 1);
                 }
                 else {
@@ -371,8 +375,6 @@ public class HbaseClient {
                 }
             }
         };
-
-        sendRequest(operation, resultBroker, responseHandler, retryWithUpdatedLocationErrorHandler, 1);
     }
 
     private void sendRequest(Operation operation,
