@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.operation;
+package com.urbanairship.hbase.shc;
 
 import com.google.common.net.HostAndPort;
 import org.apache.hadoop.hbase.ipc.Invocation;

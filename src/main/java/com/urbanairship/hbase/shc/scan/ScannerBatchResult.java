@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.response;
+package com.urbanairship.hbase.shc.scan;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -6,8 +6,8 @@ import org.apache.hadoop.hbase.client.Result;
 
 public final class ScannerBatchResult {
 
-    public enum Status {
-        RESULTS_RETURNED, NO_MORE_RESULTS_IN_REGION, FINISHED
+    public static enum Status {
+        RESULTS_AVAILABLE, NO_MORE_RESULTS_IN_REGION, FINISHED
     }
 
     private static final ScannerBatchResult NO_MORE_RESULTS_IN_REGION_RESULT =
@@ -17,14 +17,14 @@ public final class ScannerBatchResult {
             new ScannerBatchResult(Status.FINISHED, ImmutableList.<Result>of());
 
     public static ScannerBatchResult resultsReturned(ImmutableList<Result> results) {
-        return new ScannerBatchResult(Status.RESULTS_RETURNED, results);
+        return new ScannerBatchResult(Status.RESULTS_AVAILABLE, results);
     }
 
     public static ScannerBatchResult noMoreResultsInRegion() {
         return NO_MORE_RESULTS_IN_REGION_RESULT;
     }
 
-    public static ScannerBatchResult finished() {
+    public static ScannerBatchResult allFinished() {
         return FINISHED_RESULT;
     }
 
@@ -41,7 +41,7 @@ public final class ScannerBatchResult {
     }
 
     public ImmutableList<Result> getResults() {
-        Preconditions.checkState(status == Status.RESULTS_RETURNED);
+        Preconditions.checkState(status == Status.RESULTS_AVAILABLE);
         return results;
     }
 

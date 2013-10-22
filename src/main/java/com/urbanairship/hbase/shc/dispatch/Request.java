@@ -1,6 +1,6 @@
 package com.urbanairship.hbase.shc.dispatch;
 
-import com.urbanairship.hbase.shc.operation.Operation;
+import com.urbanairship.hbase.shc.Operation;
 import org.apache.hadoop.hbase.ipc.Invocation;
 
 public final class Request {

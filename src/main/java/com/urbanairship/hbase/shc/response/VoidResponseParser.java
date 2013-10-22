@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.operation;
+package com.urbanairship.hbase.shc.response;
 
 import com.google.common.base.Function;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;

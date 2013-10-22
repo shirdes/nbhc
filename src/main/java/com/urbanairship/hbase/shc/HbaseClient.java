@@ -3,11 +3,8 @@ package com.urbanairship.hbase.shc;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Supplier;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.google.common.base.Suppliers;
+import com.google.common.collect.*;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -15,23 +12,14 @@ import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
-import com.urbanairship.hbase.shc.operation.Operation;
-import com.urbanairship.hbase.shc.operation.VoidResponseParser;
 import com.urbanairship.hbase.shc.response.MultiResponseParser;
 import com.urbanairship.hbase.shc.response.RemoteError;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
-import com.urbanairship.hbase.shc.response.ScannerBatchResult;
-import com.urbanairship.hbase.shc.response.ScannerResultStream;
+import com.urbanairship.hbase.shc.response.VoidResponseParser;
+import com.urbanairship.hbase.shc.scan.ScannerBatchResult;
+import com.urbanairship.hbase.shc.scan.ScannerResultStream;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.Action;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.MultiAction;
-import org.apache.hadoop.hbase.client.MultiResponse;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.Row;
-import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
@@ -92,6 +80,13 @@ public class HbaseClient {
 
     private static final Method SCANNER_NEXT_TARGET_METHOD = loadTargetMethod("next", new Class[]{Long.TYPE, Integer.TYPE});
 
+    private static final Function<Row, byte[]> ROW_OPERATION_ROW_EXRACTOR = new Function<Row, byte[]>() {
+        @Override
+        public byte[] apply(Row operation) {
+            return operation.getRow();
+        }
+    };
+
     private static Method loadTargetMethod(String methodName, Class<?>[] params) {
         try {
             return HRegionServer.class.getMethod(methodName, params);
@@ -114,7 +109,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Result> get(String table, Get get) {
-        return singleRowRequest(table, get, GET_TARGET_METHOD, GET_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, get, ROW_OPERATION_ROW_EXRACTOR, GET_TARGET_METHOD, GET_RESPONSE_PARSER);
     }
 
     public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
@@ -196,7 +191,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
-        return singleRowRequest(table, put, PUT_TARGET_METHOD, PUT_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, put, ROW_OPERATION_ROW_EXRACTOR, PUT_TARGET_METHOD, PUT_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
@@ -204,7 +199,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
-        return singleRowRequest(table, delete, DELETE_TARGET_METHOD, DELETE_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, delete, ROW_OPERATION_ROW_EXRACTOR, DELETE_TARGET_METHOD, DELETE_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
@@ -218,14 +213,22 @@ public class HbaseClient {
         return null;
     }
 
-    private ListenableFuture<Long> openScanner(HRegionLocation location, String table, Scan scan) {
-        // TODO: implement
-        return null;
+    private ListenableFuture<Long> openScanner(String table, Scan scan) {
+        Function<Scan, byte[]> rowExtractor = new Function<Scan, byte[]>() {
+            @Override
+            public byte[] apply(Scan scan) {
+                return scan.getStartRow();
+            }
+        };
+
+        return simpleResultLocationAndParamRequest(table, scan, rowExtractor, OPEN_SCANNER_TARGET_METHOD, OPEN_SCANNER_RESPONSE_PARSER);
     }
 
     private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
-        // TODO: implement
-        return null;
+        Invocation invocation = new Invocation(CLOSE_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId});
+        Supplier<HRegionLocation> sameLocationSupplier = Suppliers.ofInstance(location);
+
+        return simpleResultRequest(location, invocation, CLOSE_SCANNER_RESPONSE_PARSER, sameLocationSupplier);
     }
 
     // TODO: don't like having a method with two numbers right next to each other as params. Perhaps next batch identifier object or something?
@@ -233,13 +236,22 @@ public class HbaseClient {
                                                                      long scannerId,
                                                                      int numResults) {
 
+        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+                scannerId,
+                numResults
+        });
+
+        Operation operation = new Operation(getHost(location), invocation);
+
         final HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
-        ResponseCallback callback = new ResponseCallback() {
+
+        // TODO: should probably pull this into a top level class since it has a chunk of logic
+        HbaseResponseHandler responseHandler = new HbaseResponseHandler() {
             @Override
-            public void receiveResponse(HbaseObjectWritable value) {
+            public void handle(HbaseObjectWritable value) {
                 Object object = value.get();
                 if (object == null) {
-                    future.communicateResult(ScannerBatchResult.finished());
+                    future.communicateResult(ScannerBatchResult.allFinished());
                     return;
                 }
 
@@ -255,47 +267,53 @@ public class HbaseClient {
 
                 future.communicateResult(batchResult);
             }
+        };
 
+        // TODO: incorporate retries if possible and then handle the cases where we might need to reopend the scanner
+        HbaseRemoteErrorHandler errorHandler = new HbaseRemoteErrorHandler() {
             @Override
-            public void receiveError(RemoteError errorResponse) {
-                // TODO: stop sucking at the errors.
-                // TODO: gonna need to check for things like the region being offline or the scanner expiring and
-                // TODO:  in those cases do some retry logic
-                future.communicateError(new RemoteException(errorResponse.getErrorClass(),
-                        errorResponse.getErrorMessage().isPresent() ? errorResponse.getErrorMessage().get() : ""));
+            public void handle(RemoteError error, int attempt) {
+                future.communicateError(new RemoteException(error.getErrorClass(),
+                        error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
             }
         };
 
-        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId, numResults});
-        Operation operation = new Operation(getHost(location), invocation);
-        int requestId = dispatcher.request(operation, callback);
-        future.setCurrentActiveRequestId(requestId);
+        sendRequest(operation, future, responseHandler, errorHandler, 1);
 
         return future;
     }
 
-    private <P extends Row, R> ListenableFuture<R> singleRowRequest(final String table,
-                                                                    final P param,
-                                                                    Method targetMethod,
-                                                                    Function<HbaseObjectWritable, R> responseParser) {
+    private <P, R> ListenableFuture<R> simpleResultLocationAndParamRequest(final String table,
+                                                                           final P param,
+                                                                           final Function<? super P, byte[]> rowExtractor,
+                                                                           Method targetMethod,
+                                                                           Function<HbaseObjectWritable, R> responseParser) {
 
-        HRegionLocation location = topology.getRegionServer(table, param.getRow());
-
-        HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
+        HRegionLocation location = topology.getRegionServer(table, rowExtractor.apply(param));
 
         Invocation invocation = new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
                 location.getRegionInfo().getRegionName(),
                 param
         });
 
-        SimpleResponseParsingResponseHandler<R> responseHandler = new SimpleResponseParsingResponseHandler<R>(future, responseParser);
-
         Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
             @Override
             public HRegionLocation get() {
-                return topology.getRegionServerNoCache(table, param.getRow());
+                return topology.getRegionServerNoCache(table, rowExtractor.apply(param));
             }
         };
+
+        return simpleResultRequest(location, invocation, responseParser, updatedLocationSupplier);
+    }
+
+    private <P, R> ListenableFuture<R> simpleResultRequest(HRegionLocation location,
+                                                           Invocation invocation,
+                                                           Function<HbaseObjectWritable, R> responseParser,
+                                                           Supplier<HRegionLocation> updatedLocationSupplier) {
+
+        HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
+
+        SimpleResponseParsingResponseHandler<R> responseHandler = new SimpleResponseParsingResponseHandler<R>(future, responseParser);
 
         HbaseRemoteErrorHandler errorHandler = getRetryWithUpdatedLocationErrorHandler(invocation,
                 updatedLocationSupplier, future, responseHandler);

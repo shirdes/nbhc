@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.response;
+package com.urbanairship.hbase.shc.scan;
 
 import org.apache.hadoop.hbase.client.Result;
 
