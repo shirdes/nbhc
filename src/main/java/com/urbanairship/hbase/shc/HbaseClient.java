@@ -157,6 +157,8 @@ public class HbaseClient {
                         }
                     }
 
+                    // TODO: if needRetry has stuff in it, then need to issue the request for those rows.
+
                     if (needRetry.isEmpty()) {
                         future.communicateResult(ImmutableMap.copyOf(collectedResults));
                     }
