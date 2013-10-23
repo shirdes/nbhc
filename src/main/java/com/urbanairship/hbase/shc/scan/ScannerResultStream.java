@@ -1,34 +1,54 @@
 package com.urbanairship.hbase.shc.scan;
 
+import com.google.common.base.Supplier;
 import com.google.common.collect.AbstractIterator;
-import com.urbanairship.hbase.shc.RegionOwnershipTopology;
 import org.apache.hadoop.hbase.client.Result;
-import sun.org.mozilla.javascript.internal.Function;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Iterator;
 
 public class ScannerResultStream extends AbstractIterator<Result> implements Closeable {
 
-    private SingleRegionScannerResultStream currentRegionStream;
+    private final ScanStateHolder scanStateHolder;
+
+    private final Supplier<ScannerBatchResult> batchLoader;
+
+    private SingleRegionScannerResultStream currentRegionStream = null;
+
+    public ScannerResultStream(ScanStateHolder scanStateHolder) {
+        this.scanStateHolder = scanStateHolder;
+        this.batchLoader = new Supplier<ScannerBatchResult>() {
+            @Override
+            public ScannerBatchResult get() {
+                return ScannerResultStream.this.scanStateHolder.loadNextBatch();
+            }
+        };
+    }
 
     @Override
     protected Result computeNext() {
-        if (currentStreamHasNext()) {
-            return currentRegionStream.next();
+        while (!isNextAvailableFromCurrentStream() && isNextRegionStreamAvailable()) {
+            if (!scanStateHolder.openNextScannerId()) {
+                break;
+            }
+
+            currentRegionStream = new SingleRegionScannerResultStream(batchLoader);
         }
 
-
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        return isNextAvailableFromCurrentStream() ? currentRegionStream.next() : endOfData();
     }
 
-    private boolean currentStreamHasNext() {
+    private boolean isNextRegionStreamAvailable() {
+        return currentRegionStream == null ||
+                currentRegionStream.getFinalStatus() == ScannerBatchResult.Status.NO_MORE_RESULTS_IN_REGION;
+    }
+
+    private boolean isNextAvailableFromCurrentStream() {
         return currentRegionStream != null && currentRegionStream.hasNext();
     }
 
     @Override
     public void close() throws IOException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        scanStateHolder.closeOpenScanner();
     }
 }

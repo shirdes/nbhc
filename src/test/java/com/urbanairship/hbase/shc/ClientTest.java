@@ -14,14 +14,10 @@ import com.urbanairship.hbase.shc.dispatch.netty.DisconnectCallback;
 import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
+import com.urbanairship.hbase.shc.scan.ScannerResultStream;
 import org.apache.commons.configuration.MapConfiguration;
 import org.apache.commons.lang.math.RandomUtils;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.HConnection;
-import org.apache.hadoop.hbase.client.HConnectionManager;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.jboss.netty.bootstrap.ClientBootstrap;
@@ -41,9 +37,7 @@ import java.util.concurrent.ThreadFactory;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
 import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class ClientTest {
 
@@ -195,6 +189,24 @@ public class ClientTest {
 
             String key = Bytes.toString(result.getRow());
             assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
+        }
+
+        Scan scan = new Scan();
+        scan.addFamily(FAMILY);
+        scan.setCaching(10);
+        ScannerResultStream stream = client.getScannerStream(TABLE, scan);
+        try {
+            while (stream.hasNext()) {
+                Result result = stream.next();
+
+                String key = Bytes.toString(result.getRow());
+
+                assertEquals(1, result.getFamilyMap(FAMILY).size());
+                assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
+            }
+        }
+        finally {
+            stream.close();
         }
 
         List<String> rows = Lists.newArrayList(entries.keySet());

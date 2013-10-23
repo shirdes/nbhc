@@ -16,8 +16,7 @@ import com.urbanairship.hbase.shc.response.MultiResponseParser;
 import com.urbanairship.hbase.shc.response.RemoteError;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
 import com.urbanairship.hbase.shc.response.VoidResponseParser;
-import com.urbanairship.hbase.shc.scan.ScannerBatchResult;
-import com.urbanairship.hbase.shc.scan.ScannerResultStream;
+import com.urbanairship.hbase.shc.scan.*;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
@@ -34,6 +33,7 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class HbaseClient {
 
@@ -208,22 +208,68 @@ public class HbaseClient {
         return makeMultiMutationRequest(table, deletes, "delete");
     }
 
-    public ScannerResultStream getScannerStream(String table, Scan scan) {
+    public ScannerResultStream getScannerStream(String table, final Scan scan) {
         // TODO: ensure that the Scan object has a value set for caching?  Otherwise we'd have to have a default given
         // TODO: to this client as a data member?
+        // TODO: need to get the timeouts from somewhere
+        ScanOperationConfig config = ScanOperationConfig.newBuilder()
+                .build();
 
-        return null;
+        ScanStateHolder stateHolder = new ScanStateHolder(
+                table, scan,
+                new ScanOpener() {
+                    @Override
+                    public ListenableFuture<ScannerOpenResult> open(String table, Scan scan) {
+                        return openScanner(table, scan);
+                    }
+                },
+                new ScanResultsLoader() {
+                    @Override
+                    public ListenableFuture<ScannerBatchResult> load(HRegionLocation location, long scannerId) {
+                        return getScannerNextBatch(location, scannerId, scan.getCaching());
+                    }
+                },
+                new ScanCloser() {
+                    @Override
+                    public ListenableFuture<Void> close(HRegionLocation location, long scannerId) {
+                        return closeScanner(location, scannerId);
+                    }
+                },
+                config
+        );
+
+        return new ScannerResultStream(stateHolder);
     }
 
-    private ListenableFuture<Long> openScanner(String table, Scan scan) {
-        Function<Scan, byte[]> rowExtractor = new Function<Scan, byte[]>() {
+    private ListenableFuture<ScannerOpenResult> openScanner(final String table, final Scan scan) {
+        HRegionLocation location = topology.getRegionServer(table, scan.getStartRow());
+
+        // TODO: getting a bit spaghetti here...
+        final AtomicReference<HRegionLocation> scannerLocation = new AtomicReference<HRegionLocation>(location);
+        Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
             @Override
-            public byte[] apply(Scan scan) {
-                return scan.getStartRow();
+            public HRegionLocation get() {
+                HRegionLocation updatedLocation = topology.getRegionServerNoCache(table, scan.getStartRow());
+                scannerLocation.set(updatedLocation);
+                return updatedLocation;
             }
         };
 
-        return simpleResultLocationAndParamRequest(table, scan, rowExtractor, OPEN_SCANNER_TARGET_METHOD, OPEN_SCANNER_RESPONSE_PARSER);
+        Function<HbaseObjectWritable, ScannerOpenResult> responseParser = new Function<HbaseObjectWritable, ScannerOpenResult>() {
+            @Override
+            public ScannerOpenResult apply(HbaseObjectWritable value) {
+                Long scannerId = OPEN_SCANNER_RESPONSE_PARSER.apply(value);
+                return new ScannerOpenResult(scannerLocation.get(), scannerId);
+            }
+        };
+
+        // TODO: if the location changes on a subsequent lookup, this invocation needs to change!
+        Invocation invocation = new Invocation(OPEN_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+                location.getRegionInfo().getRegionName(),
+                scan
+        });
+
+        return simpleResultRequest(location, invocation, responseParser, updatedLocationSupplier);
     }
 
     private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
@@ -308,10 +354,10 @@ public class HbaseClient {
         return simpleResultRequest(location, invocation, responseParser, updatedLocationSupplier);
     }
 
-    private <P, R> ListenableFuture<R> simpleResultRequest(HRegionLocation location,
-                                                           Invocation invocation,
-                                                           Function<HbaseObjectWritable, R> responseParser,
-                                                           Supplier<HRegionLocation> updatedLocationSupplier) {
+    private <R> ListenableFuture<R> simpleResultRequest(HRegionLocation location,
+                                                        Invocation invocation,
+                                                        Function<HbaseObjectWritable, R> responseParser,
+                                                        Supplier<HRegionLocation> updatedLocationSupplier) {
 
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
 
@@ -385,6 +431,7 @@ public class HbaseClient {
                 if (isRetryableError(error) && attempt <= maxRetries) {
                     HRegionLocation updatedLocation = updatedLocationSupplier.get();
 
+                    // TODO: this doesn't work if the location is in the Invocation!!!!
                     Operation retryOperation = new Operation(getHost(updatedLocation), invocation);
                     sendRequest(retryOperation, resultBroker, responseHandler, this, attempt + 1);
                 }

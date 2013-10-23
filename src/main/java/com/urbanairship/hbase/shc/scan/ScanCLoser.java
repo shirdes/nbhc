@@ -3,8 +3,8 @@ package com.urbanairship.hbase.shc.scan;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
 
-public interface ScanResultsLoader {
+public interface ScanCloser {
 
-    ListenableFuture<ScannerBatchResult> load(HRegionLocation location, long scannerId);
+    ListenableFuture<Void> close(HRegionLocation location, long scannerId);
 
 }
