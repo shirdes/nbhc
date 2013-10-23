@@ -6,22 +6,18 @@ import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.hbase.client.Result;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.util.Queue;
 
-public class SingleRegionScannerResultStream extends AbstractIterator<Result> implements ScannerResultStream {
+public class SingleRegionScannerResultStream extends AbstractIterator<Result> {
 
     private final Supplier<ScannerBatchResult> batchLoader;
-    private final Closeable closeFunction;
 
     private Queue<Result> currentResults;
 
     private ScannerBatchResult.Status finalStatus;
 
-    public SingleRegionScannerResultStream(Supplier<ScannerBatchResult> batchLoader, Closeable closeFunction) {
+    public SingleRegionScannerResultStream(Supplier<ScannerBatchResult> batchLoader) {
         this.batchLoader = batchLoader;
-        this.closeFunction = closeFunction;
 
         this.currentResults = Lists.newLinkedList();
     }
@@ -42,11 +38,6 @@ public class SingleRegionScannerResultStream extends AbstractIterator<Result> im
 
         currentResults = Lists.newLinkedList(nextBatch.getResults());
         return currentResults.remove();
-    }
-
-    @Override
-    public void close() throws IOException {
-        closeFunction.close();
     }
 
     public ScannerBatchResult.Status getFinalStatus() {
