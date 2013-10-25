@@ -33,7 +33,6 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class HbaseClient {
 
@@ -109,7 +108,8 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Result> get(String table, Get get) {
-        return simpleResultLocationAndParamRequest(table, get, ROW_OPERATION_ROW_EXRACTOR, GET_TARGET_METHOD, GET_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, get, ROW_OPERATION_ROW_EXRACTOR, GET_TARGET_METHOD,
+                new SimpleParseResponseProcessor<Result>(GET_RESPONSE_PARSER));
     }
 
     public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
@@ -193,7 +193,8 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
-        return simpleResultLocationAndParamRequest(table, put, ROW_OPERATION_ROW_EXRACTOR, PUT_TARGET_METHOD, PUT_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, put, ROW_OPERATION_ROW_EXRACTOR, PUT_TARGET_METHOD,
+                new SimpleParseResponseProcessor<Void>(PUT_RESPONSE_PARSER));
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
@@ -201,7 +202,8 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
-        return simpleResultLocationAndParamRequest(table, delete, ROW_OPERATION_ROW_EXRACTOR, DELETE_TARGET_METHOD, DELETE_RESPONSE_PARSER);
+        return simpleResultLocationAndParamRequest(table, delete, ROW_OPERATION_ROW_EXRACTOR, DELETE_TARGET_METHOD,
+                new SimpleParseResponseProcessor<Void>(DELETE_RESPONSE_PARSER));
     }
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
@@ -242,62 +244,63 @@ public class HbaseClient {
     }
 
     private ListenableFuture<ScannerOpenResult> openScanner(final String table, final Scan scan) {
-        HRegionLocation location = topology.getRegionServer(table, scan.getStartRow());
+        Function<Object, byte[]> rowExtractor = Functions.constant(scan.getStartRow());
 
-        // TODO: getting a bit spaghetti here...
-        final AtomicReference<HRegionLocation> scannerLocation = new AtomicReference<HRegionLocation>(location);
-        Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
+        // TODO: this can be static
+        ResponseProcessor<ScannerOpenResult> responseProcessor = new ResponseProcessor<ScannerOpenResult>() {
             @Override
-            public HRegionLocation get() {
-                HRegionLocation updatedLocation = topology.getRegionServerNoCache(table, scan.getStartRow());
-                scannerLocation.set(updatedLocation);
-                return updatedLocation;
+            public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<ScannerOpenResult> resultBroker) {
+                Long scannerId = OPEN_SCANNER_RESPONSE_PARSER.apply(received);
+                resultBroker.communicateResult(new ScannerOpenResult(location, scannerId));
             }
         };
 
-        Function<HbaseObjectWritable, ScannerOpenResult> responseParser = new Function<HbaseObjectWritable, ScannerOpenResult>() {
-            @Override
-            public ScannerOpenResult apply(HbaseObjectWritable value) {
-                Long scannerId = OPEN_SCANNER_RESPONSE_PARSER.apply(value);
-                return new ScannerOpenResult(scannerLocation.get(), scannerId);
-            }
-        };
-
-        // TODO: if the location changes on a subsequent lookup, this invocation needs to change!
-        Invocation invocation = new Invocation(OPEN_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
-                location.getRegionInfo().getRegionName(),
-                scan
-        });
-
-        return simpleResultRequest(location, invocation, responseParser, updatedLocationSupplier);
+        return simpleResultLocationAndParamRequest(table, scan, rowExtractor, OPEN_SCANNER_TARGET_METHOD, responseProcessor);
     }
 
     private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
-        Invocation invocation = new Invocation(CLOSE_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId});
-        Supplier<HRegionLocation> sameLocationSupplier = Suppliers.ofInstance(location);
+        final Invocation invocation = new Invocation(CLOSE_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId});
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation input) {
+                return invocation;
+            }
+        };
 
-        return simpleResultRequest(location, invocation, CLOSE_SCANNER_RESPONSE_PARSER, sameLocationSupplier);
+        Supplier<HRegionLocation> sameLocationProvider = Suppliers.ofInstance(location);
+
+        SimpleParseResponseProcessor<Void> responseProcessor = new SimpleParseResponseProcessor<Void>(CLOSE_SCANNER_RESPONSE_PARSER);
+
+        HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
+        DefaultRequestController<Void> controller = new DefaultRequestController<Void>(
+                location,
+                future,
+                invocationBuilder,
+                responseProcessor,
+                sameLocationProvider
+        );
+
+        sendRequest(future, controller, 1);
+
+        return future;
     }
 
     // TODO: don't like having a method with two numbers right next to each other as params. Perhaps next batch identifier object or something?
-    private ListenableFuture<ScannerBatchResult> getScannerNextBatch(HRegionLocation location,
+    private ListenableFuture<ScannerBatchResult> getScannerNextBatch(final HRegionLocation location,
                                                                      long scannerId,
                                                                      int numResults) {
 
-        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+        final Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
                 scannerId,
                 numResults
         });
 
-        Operation operation = new Operation(getHost(location), invocation);
-
         final HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
 
-        // TODO: should probably pull this into a top level class since it has a chunk of logic
-        HbaseResponseHandler responseHandler = new HbaseResponseHandler() {
+        RequestController controller = new RequestController() {
             @Override
-            public void handle(HbaseObjectWritable value) {
-                Object object = value.get();
+            public void handleResponse(HbaseObjectWritable received) {
+                Object object = received.get();
                 if (object == null) {
                     future.communicateResult(ScannerBatchResult.allFinished());
                     return;
@@ -315,18 +318,27 @@ public class HbaseClient {
 
                 future.communicateResult(batchResult);
             }
-        };
 
-        // TODO: incorporate retries if possible and then handle the cases where we might need to reopend the scanner
-        HbaseRemoteErrorHandler errorHandler = new HbaseRemoteErrorHandler() {
             @Override
-            public void handle(RemoteError error, int attempt) {
+            public void handleRemoteError(RemoteError error, int attempt) {
+                // TODO: need to understand error semantics like when a region moves.  How do we reopen a scanner
+                // TODO: if needed?
                 future.communicateError(new RemoteException(error.getErrorClass(),
                         error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
             }
+
+            @Override
+            public void handleLocalError(Throwable error, int attempt) {
+                // TODO: what do we do??
+            }
+
+            @Override
+            public Operation buildOperation() {
+                return new Operation(getHost(location), invocation);
+            }
         };
 
-        sendRequest(operation, future, responseHandler, errorHandler, 1);
+        sendRequest(future, controller, 1);
 
         return future;
     }
@@ -334,15 +346,10 @@ public class HbaseClient {
     private <P, R> ListenableFuture<R> simpleResultLocationAndParamRequest(final String table,
                                                                            final P param,
                                                                            final Function<? super P, byte[]> rowExtractor,
-                                                                           Method targetMethod,
-                                                                           Function<HbaseObjectWritable, R> responseParser) {
+                                                                           final Method targetMethod,
+                                                                           ResponseProcessor<R> responseProcessor) {
 
         HRegionLocation location = topology.getRegionServer(table, rowExtractor.apply(param));
-
-        Invocation invocation = new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
-                location.getRegionInfo().getRegionName(),
-                param
-        });
 
         Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
             @Override
@@ -351,24 +358,26 @@ public class HbaseClient {
             }
         };
 
-        return simpleResultRequest(location, invocation, responseParser, updatedLocationSupplier);
-    }
-
-    private <R> ListenableFuture<R> simpleResultRequest(HRegionLocation location,
-                                                        Invocation invocation,
-                                                        Function<HbaseObjectWritable, R> responseParser,
-                                                        Supplier<HRegionLocation> updatedLocationSupplier) {
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation invocationLocation) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        invocationLocation.getRegionInfo().getRegionName(),
+                        param
+                });
+            }
+        };
 
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
+        DefaultRequestController<R> controller = new DefaultRequestController<R>(
+                location,
+                future,
+                invocationBuilder,
+                responseProcessor,
+                updatedLocationSupplier
+        );
 
-        SimpleResponseParsingResponseHandler<R> responseHandler = new SimpleResponseParsingResponseHandler<R>(future, responseParser);
-
-        HbaseRemoteErrorHandler errorHandler = getRetryWithUpdatedLocationErrorHandler(invocation,
-                updatedLocationSupplier, future, responseHandler);
-
-        Operation operation = new Operation(getHost(location), invocation);
-
-        sendRequest(operation, future, responseHandler, errorHandler, 1);
+        sendRequest(future, controller, 1);
 
         return future;
     }
@@ -421,44 +430,21 @@ public class HbaseClient {
         return regionActions;
     }
 
-    private HbaseRemoteErrorHandler getRetryWithUpdatedLocationErrorHandler(final Invocation invocation,
-                                                                            final Supplier<HRegionLocation> updatedLocationSupplier,
-                                                                            final ResultBroker<?> resultBroker,
-                                                                            final HbaseResponseHandler responseHandler) {
-        return new HbaseRemoteErrorHandler() {
-            @Override
-            public void handle(RemoteError error, int attempt) {
-                if (isRetryableError(error) && attempt <= maxRetries) {
-                    HRegionLocation updatedLocation = updatedLocationSupplier.get();
-
-                    // TODO: this doesn't work if the location is in the Invocation!!!!
-                    Operation retryOperation = new Operation(getHost(updatedLocation), invocation);
-                    sendRequest(retryOperation, resultBroker, responseHandler, this, attempt + 1);
-                }
-                else {
-                    // TODO; get smarter about the error handling
-                    resultBroker.communicateError(new RemoteException(error.getErrorClass(),
-                            error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
-                }
-            }
-        };
-    }
-
-    private void sendRequest(Operation operation,
-                             ResultBroker<?> resultBroker,
-                             final HbaseResponseHandler responseHandler,
-                             final HbaseRemoteErrorHandler remoteErrorHandler,
+    private void sendRequest(ResultBroker<?> resultBroker,
+                             final RequestController controller,
                              final int attempt) {
+
+        Operation operation = controller.buildOperation();
 
         ResponseCallback callback = new ResponseCallback() {
             @Override
             public void receiveResponse(HbaseObjectWritable value) {
-                responseHandler.handle(value);
+                controller.handleResponse(value);
             }
 
             @Override
             public void receiveError(RemoteError remoteError) {
-                remoteErrorHandler.handle(remoteError, attempt);
+                controller.handleRemoteError(remoteError, attempt);
             }
         };
 
@@ -474,25 +460,35 @@ public class HbaseClient {
         return HostAndPort.fromParts(location.getHostname(), location.getPort());
     }
 
-    private static interface HbaseResponseHandler {
-        void handle(HbaseObjectWritable value);
+    private static interface RequestController {
+
+        void handleResponse(HbaseObjectWritable received);
+
+        void handleRemoteError(RemoteError error, int attempt);
+
+        void handleLocalError(Throwable error, int attempt);
+
+        Operation buildOperation();
+
     }
 
-    private static final class SimpleResponseParsingResponseHandler<R> implements HbaseResponseHandler {
+    private static interface ResponseProcessor<R> {
+        void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<R> resultBroker);
+    }
 
-        private final ResultBroker<R> resultBroker;
-        private final Function<HbaseObjectWritable, R> responseParser;
+    private final class SimpleParseResponseProcessor<R> implements ResponseProcessor<R> {
 
-        private SimpleResponseParsingResponseHandler(ResultBroker<R> resultBroker, Function<HbaseObjectWritable, R> responseParser) {
-            this.resultBroker = resultBroker;
-            this.responseParser = responseParser;
+        private final Function<HbaseObjectWritable, R> parser;
+
+        private SimpleParseResponseProcessor(Function<HbaseObjectWritable, R> parser) {
+            this.parser = parser;
         }
 
         @Override
-        public void handle(HbaseObjectWritable value) {
+        public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<R> resultBroker) {
             R response;
             try {
-                response = responseParser.apply(value);
+                response = parser.apply(received);
             }
             catch (Exception e) {
                 resultBroker.communicateError(e);
@@ -503,8 +499,56 @@ public class HbaseClient {
         }
     }
 
-    private static interface HbaseRemoteErrorHandler {
-        void handle(RemoteError error, int attempt);
+    private final class DefaultRequestController<R> implements RequestController {
+
+        private final ResultBroker<R> resultBroker;
+        private final Function<HRegionLocation, Invocation> invocationBuilder;
+        private final ResponseProcessor<R> responseProcessor;
+        private final Supplier<HRegionLocation> updatedLocationSupplier;
+
+        private HRegionLocation currentLocation;
+
+        private DefaultRequestController(HRegionLocation location,
+                                         ResultBroker<R> resultBroker,
+                                         Function<HRegionLocation, Invocation> invocationBuilder,
+                                         ResponseProcessor<R> responseProcessor,
+                                         Supplier<HRegionLocation> updatedLocationSupplier) {
+            this.resultBroker = resultBroker;
+            this.invocationBuilder = invocationBuilder;
+            this.responseProcessor = responseProcessor;
+            this.updatedLocationSupplier = updatedLocationSupplier;
+
+            this.currentLocation = location;
+        }
+
+        @Override
+        public void handleResponse(HbaseObjectWritable received) {
+            responseProcessor.process(currentLocation, received, resultBroker);
+        }
+
+        @Override
+        public void handleRemoteError(RemoteError error, int attempt) {
+            if (isRetryableError(error) && attempt <= maxRetries) {
+                currentLocation = updatedLocationSupplier.get();
+                sendRequest(resultBroker, this, attempt + 1);
+            }
+            else {
+                // TODO; get smarter about the error handling
+                resultBroker.communicateError(new RemoteException(error.getErrorClass(),
+                        error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
+            }
+        }
+
+        @Override
+        public void handleLocalError(Throwable error, int attempt) {
+            // TODO: implement.  Probably retry same as the remote error
+        }
+
+        @Override
+        public Operation buildOperation() {
+            Invocation invocation = invocationBuilder.apply(currentLocation);
+            return new Operation(getHost(currentLocation), invocation);
+        }
     }
 
 }
