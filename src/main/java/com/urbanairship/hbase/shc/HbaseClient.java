@@ -4,17 +4,17 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.*;
-import com.google.common.net.HostAndPort;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
-import com.urbanairship.hbase.shc.dispatch.RegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
-import com.urbanairship.hbase.shc.response.MultiResponseParser;
+import com.urbanairship.hbase.shc.request.*;
 import com.urbanairship.hbase.shc.response.RemoteError;
-import com.urbanairship.hbase.shc.response.ResponseCallback;
 import com.urbanairship.hbase.shc.response.VoidResponseParser;
 import com.urbanairship.hbase.shc.scan.*;
 import org.apache.hadoop.hbase.HRegionLocation;
@@ -24,15 +24,12 @@ import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
-import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.ipc.RemoteException;
 
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 public class HbaseClient {
 
@@ -95,14 +92,17 @@ public class HbaseClient {
         }
     }
 
-    private final RegionServerDispatcher dispatcher;
     private final RegionOwnershipTopology topology;
+    private final RequestSender sender;
     private final RequestManager requestManager;
     private final int maxRetries;
 
-    public HbaseClient(RegionServerDispatcher dispatcher, RegionOwnershipTopology topology, RequestManager requestManager, int maxRetries) {
-        this.dispatcher = dispatcher;
+    public HbaseClient(RegionOwnershipTopology topology,
+                       RequestSender sender,
+                       RequestManager requestManager,
+                       int maxRetries) {
         this.topology = topology;
+        this.sender = sender;
         this.requestManager = requestManager;
         this.maxRetries = maxRetries;
     }
@@ -113,72 +113,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
-        Map<HRegionLocation, MultiAction<Get>> locationActions = groupByLocation(table, gets);
-
-        // TODO: this is a complete and total mess!
-        List<ListenableFuture<ImmutableMap<Integer, Result>>> futures = Lists.newArrayList();
-        for (HRegionLocation location : locationActions.keySet()) {
-            MultiAction<Get> multiAction = locationActions.get(location);
-
-            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
-            Operation operation = new Operation(getHost(location), invocation);
-
-            final HbaseOperationResultFuture<ImmutableMap<Integer, Result>> future =
-                    new HbaseOperationResultFuture<ImmutableMap<Integer, Result>>(requestManager);
-
-            final ConcurrentMap<Integer, Result> collectedResults = new ConcurrentHashMap<Integer, Result>();
-            ResponseCallback callback = new ResponseCallback() {
-                @Override
-                public void receiveResponse(HbaseObjectWritable value) {
-                    Object responseObject = value.get();
-                    if (!(responseObject instanceof MultiResponse)) {
-                        // TODO: should probably bomb out
-                        return;
-                    }
-
-                    MultiResponse response = (MultiResponse) responseObject;
-
-                    Map<Integer, Get> needRetry = Maps.newHashMap();
-                    Iterable<Pair<Integer, Object>> pairs = Iterables.concat(response.getResults().values());
-                    for (Pair<Integer, Object> pair : pairs) {
-                        Object result = pair.getSecond();
-                        if (result == null || result instanceof Throwable) {
-                            // TODO: need to do a check to see if the error can be retried.  Shouldn't retry in the case of a DoNotRetryIOException
-                            needRetry.put(pair.getFirst(), gets.get(pair.getFirst()));
-                        }
-                        else if (result instanceof Result) {
-                            collectedResults.put(pair.getFirst(), (Result) result);
-                        }
-                        else {
-                            future.communicateError(new RuntimeException("Received unknown response object of type " +
-                                    result.getClass()));
-                            // TODO: this return is real deep.
-                            return;
-                        }
-                    }
-
-                    // TODO: if needRetry has stuff in it, then need to issue the request for those rows.
-
-                    if (needRetry.isEmpty()) {
-                        future.communicateResult(ImmutableMap.copyOf(collectedResults));
-                    }
-                }
-
-                @Override
-                public void receiveError(RemoteError responseError) {
-                    // TODO: check if the error is retryable and get smarter about what we return perhaps
-                    future.communicateError(new RemoteException(responseError.getErrorClass(),
-                            responseError.getErrorMessage().isPresent() ? responseError.getErrorMessage().get() : ""));
-                }
-            };
-
-            int requestId = dispatcher.request(operation, callback);
-            future.setCurrentActiveRequestId(requestId);
-
-            futures.add(future);
-        }
-
-        ListenableFuture<List<ImmutableMap<Integer, Result>>> all = Futures.allAsList(futures);
+        ListenableFuture<List<ImmutableMap<Integer, Result>>> all = multiActionRequest(table, gets);
         return Futures.transform(all, new Function<List<ImmutableMap<Integer, Result>>, List<Result>>() {
             @Override
             public List<Result> apply(List<ImmutableMap<Integer, Result>> collected) {
@@ -198,7 +133,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
-        return makeMultiMutationRequest(table, puts, "put");
+        return multiMutationRequest(table, puts);
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
@@ -207,7 +142,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
-        return makeMultiMutationRequest(table, deletes, "delete");
+        return multiMutationRequest(table, deletes);
     }
 
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
@@ -277,10 +212,12 @@ public class HbaseClient {
                 future,
                 invocationBuilder,
                 responseProcessor,
-                sameLocationProvider
+                sameLocationProvider,
+                sender,
+                maxRetries
         );
 
-        sendRequest(future, controller, 1);
+        sender.sendRequest(location, invocation, future, controller, 1);
 
         return future;
     }
@@ -331,14 +268,9 @@ public class HbaseClient {
             public void handleLocalError(Throwable error, int attempt) {
                 // TODO: what do we do??
             }
-
-            @Override
-            public Operation buildOperation() {
-                return new Operation(getHost(location), invocation);
-            }
         };
 
-        sendRequest(future, controller, 1);
+        sender.sendRequest(location, invocation, future, controller, 1);
 
         return future;
     }
@@ -368,47 +300,58 @@ public class HbaseClient {
             }
         };
 
+        Invocation invocation = invocationBuilder.apply(location);
+
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
         DefaultRequestController<R> controller = new DefaultRequestController<R>(
                 location,
                 future,
                 invocationBuilder,
                 responseProcessor,
-                updatedLocationSupplier
+                updatedLocationSupplier,
+                sender,
+                maxRetries
         );
 
-        sendRequest(future, controller, 1);
+        sender.sendRequest(location, invocation, future, controller, 1);
 
         return future;
     }
 
-    // TODO: this method sucks
-    private <M extends Row> ListenableFuture<Void> makeMultiMutationRequest(String table,
-                                                                            List<M> mutations,
-                                                                            String operationName) {
+    private <A extends Row> ListenableFuture<List<ImmutableMap<Integer, Result>>> multiActionRequest(String table,
+                                                                                                     final List<A> actions) {
 
-        Map<HRegionLocation, MultiAction<M>> regionActions = groupByLocation(table, mutations);
+        Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(table, actions);
 
-        List<ListenableFuture<Void>> futures = Lists.newArrayList();
-        for (HRegionLocation location : regionActions.keySet()) {
-            HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
-            MultiResponseParser callback = new MultiResponseParser(future, operationName);
+        Function<Integer, A> indexLookup = new Function<Integer, A>() {
+            @Override
+            public A apply(Integer index) {
+                return actions.get(index);
+            }
+        };
 
-            MultiAction<M> action = regionActions.get(location);
-            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{action});
+        List<ListenableFuture<ImmutableMap<Integer, Result>>> futures = Lists.newArrayList();
+        for (HRegionLocation location : locationActions.keySet()) {
+            MultiAction<A> multiAction = locationActions.get(location);
 
-            Operation operation = new Operation(getHost(location), invocation);
+            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
 
-            // TODO: going to need to hold these and ensure that we remove all the callbacks on timeout
-            int requestId = dispatcher.request(operation, callback);
-            future.setCurrentActiveRequestId(requestId);
+            HbaseOperationResultFuture<ImmutableMap<Integer, Result>> future =
+                    new HbaseOperationResultFuture<ImmutableMap<Integer, Result>>(requestManager);
+
+            MultiActionRequestController<A> controller = new MultiActionRequestController<A>(indexLookup, future);
+
+            sender.sendRequest(location, invocation, future, controller, 1);
 
             futures.add(future);
         }
 
-        // TODO: don't like this....
-        ListenableFuture<List<Void>> merged = Futures.allAsList(futures);
-        return Futures.transform(merged, Functions.<Void>constant(null));
+        return Futures.allAsList(futures);
+    }
+
+    private <M extends Row> ListenableFuture<Void> multiMutationRequest(String table, List<M> mutations) {
+        ListenableFuture<List<ImmutableMap<Integer, Result>>> futures = multiActionRequest(table, mutations);
+        return Futures.transform(futures, Functions.<Void>constant(null));
     }
 
     private <O extends Row> Map<HRegionLocation, MultiAction<O>> groupByLocation(String table,
@@ -428,127 +371,6 @@ public class HbaseClient {
         }
 
         return regionActions;
-    }
-
-    private void sendRequest(ResultBroker<?> resultBroker,
-                             final RequestController controller,
-                             final int attempt) {
-
-        Operation operation = controller.buildOperation();
-
-        ResponseCallback callback = new ResponseCallback() {
-            @Override
-            public void receiveResponse(HbaseObjectWritable value) {
-                controller.handleResponse(value);
-            }
-
-            @Override
-            public void receiveError(RemoteError remoteError) {
-                controller.handleRemoteError(remoteError, attempt);
-            }
-        };
-
-        int requestId = dispatcher.request(operation, callback);
-        resultBroker.setCurrentActiveRequestId(requestId);
-    }
-
-    private boolean isRetryableError(RemoteError errorResponse) {
-        return false;
-    }
-
-    private HostAndPort getHost(HRegionLocation location) {
-        return HostAndPort.fromParts(location.getHostname(), location.getPort());
-    }
-
-    private static interface RequestController {
-
-        void handleResponse(HbaseObjectWritable received);
-
-        void handleRemoteError(RemoteError error, int attempt);
-
-        void handleLocalError(Throwable error, int attempt);
-
-        Operation buildOperation();
-
-    }
-
-    private static interface ResponseProcessor<R> {
-        void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<R> resultBroker);
-    }
-
-    private final class SimpleParseResponseProcessor<R> implements ResponseProcessor<R> {
-
-        private final Function<HbaseObjectWritable, R> parser;
-
-        private SimpleParseResponseProcessor(Function<HbaseObjectWritable, R> parser) {
-            this.parser = parser;
-        }
-
-        @Override
-        public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<R> resultBroker) {
-            R response;
-            try {
-                response = parser.apply(received);
-            }
-            catch (Exception e) {
-                resultBroker.communicateError(e);
-                return;
-            }
-
-            resultBroker.communicateResult(response);
-        }
-    }
-
-    private final class DefaultRequestController<R> implements RequestController {
-
-        private final ResultBroker<R> resultBroker;
-        private final Function<HRegionLocation, Invocation> invocationBuilder;
-        private final ResponseProcessor<R> responseProcessor;
-        private final Supplier<HRegionLocation> updatedLocationSupplier;
-
-        private HRegionLocation currentLocation;
-
-        private DefaultRequestController(HRegionLocation location,
-                                         ResultBroker<R> resultBroker,
-                                         Function<HRegionLocation, Invocation> invocationBuilder,
-                                         ResponseProcessor<R> responseProcessor,
-                                         Supplier<HRegionLocation> updatedLocationSupplier) {
-            this.resultBroker = resultBroker;
-            this.invocationBuilder = invocationBuilder;
-            this.responseProcessor = responseProcessor;
-            this.updatedLocationSupplier = updatedLocationSupplier;
-
-            this.currentLocation = location;
-        }
-
-        @Override
-        public void handleResponse(HbaseObjectWritable received) {
-            responseProcessor.process(currentLocation, received, resultBroker);
-        }
-
-        @Override
-        public void handleRemoteError(RemoteError error, int attempt) {
-            if (isRetryableError(error) && attempt <= maxRetries) {
-                currentLocation = updatedLocationSupplier.get();
-                sendRequest(resultBroker, this, attempt + 1);
-            }
-            else {
-                // TODO; get smarter about the error handling
-                resultBroker.communicateError(new RemoteException(error.getErrorClass(),
-                        error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
-            }
-        }
-
-        @Override
-        public void handleLocalError(Throwable error, int attempt) {
-            // TODO: implement.  Probably retry same as the remote error
-        }
-
-        @Override
-        public Operation buildOperation() {
-            Invocation invocation = invocationBuilder.apply(currentLocation);
-            return new Operation(getHost(currentLocation), invocation);
-        }
     }
 
 }

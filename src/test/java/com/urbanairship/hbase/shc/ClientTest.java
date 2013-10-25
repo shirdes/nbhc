@@ -14,6 +14,7 @@ import com.urbanairship.hbase.shc.dispatch.netty.DisconnectCallback;
 import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
+import com.urbanairship.hbase.shc.request.RequestSender;
 import com.urbanairship.hbase.shc.scan.ScannerResultStream;
 import org.apache.commons.configuration.MapConfiguration;
 import org.apache.commons.lang.math.RandomUtils;
@@ -30,6 +31,7 @@ import org.junit.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -56,8 +58,13 @@ public class ClientTest {
         hbase = new HBaseEnvironment(new MapConfiguration(ImmutableMap.of()));
         hbase.startAndWait();
 
+        byte[][] splits = new byte[16][];
+        for (int i = 0; i < 16; i++) {
+            splits[i] = Integer.toString(i).getBytes(Charsets.UTF_8);
+        }
+
         Schemas.run(hbase.getHadoopConfiguration(), ImmutableMap.of(
-                Schemas.makeTableDescriptor(TABLE.getBytes(Charsets.UTF_8), Schemas.makeCfDesc(FAMILY, 1, StoreFile.BloomType.ROW, true)), new byte[0][]
+            Schemas.makeTableDescriptor(TABLE.getBytes(Charsets.UTF_8), Schemas.makeCfDesc(FAMILY, 1, StoreFile.BloomType.ROW, true)), splits
         ));
 
         ThreadFactory bossThreadFactory = new ThreadFactoryBuilder()
@@ -110,7 +117,8 @@ public class ClientTest {
         channelProvider = new HostChannelProvider(clientBootstrap);
         NettyRegionServerDispatcher dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
 
-        client = new HbaseClient(dispatcher, topology, requestManager, 1);
+        RequestSender sender = new RequestSender(dispatcher);
+        client = new HbaseClient(topology, sender, requestManager, 1);
     }
 
     @AfterClass
@@ -123,7 +131,7 @@ public class ClientTest {
 
     @Test
     public void testSingleCrud() throws Exception {
-        String row = randomAlphabetic(10);
+        String row = UUID.randomUUID().toString();
         String value = randomAlphabetic(5);
 
         Put put = new Put(Bytes.toBytes(row), System.currentTimeMillis());
@@ -159,7 +167,7 @@ public class ClientTest {
     public void testMulti() throws Exception {
         Map<String, String> entries = Maps.newHashMap();
         for (int i = 0; i < 100; i++) {
-            entries.put(randomAlphanumeric(10), randomAlphanumeric(5));
+            entries.put(UUID.randomUUID().toString(), randomAlphanumeric(5));
         }
 
         List<Put> puts = Lists.newArrayList();
