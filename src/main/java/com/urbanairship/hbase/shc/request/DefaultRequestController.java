@@ -21,12 +21,12 @@ public class DefaultRequestController<R> implements RequestController {
     private HRegionLocation currentLocation;
 
     public DefaultRequestController(HRegionLocation location,
-                                     ResultBroker<R> resultBroker,
-                                     Function<HRegionLocation, Invocation> invocationBuilder,
-                                     ResponseProcessor<R> responseProcessor,
-                                     Supplier<HRegionLocation> updatedLocationSupplier,
-                                     RequestSender sender,
-                                     int maxRetries) {
+                                    ResultBroker<R> resultBroker,
+                                    Function<HRegionLocation, Invocation> invocationBuilder,
+                                    ResponseProcessor<R> responseProcessor,
+                                    Supplier<HRegionLocation> updatedLocationSupplier,
+                                    RequestSender sender,
+                                    int maxRetries) {
         this.resultBroker = resultBroker;
         this.invocationBuilder = invocationBuilder;
         this.responseProcessor = responseProcessor;

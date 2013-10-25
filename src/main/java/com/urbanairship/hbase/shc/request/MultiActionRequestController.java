@@ -23,7 +23,8 @@ public final class MultiActionRequestController<P> implements RequestController 
 
     private final ConcurrentMap<Integer, Result> collectedResults = new ConcurrentHashMap<Integer, Result>();
 
-    public MultiActionRequestController(Function<Integer, P> indexParamLookup, ResultBroker<ImmutableMap<Integer, Result>> resultBroker) {
+    public MultiActionRequestController(Function<Integer, P> indexParamLookup,
+                                        ResultBroker<ImmutableMap<Integer, Result>> resultBroker) {
         this.indexParamLookup = indexParamLookup;
         this.resultBroker = resultBroker;
     }
