@@ -256,4 +256,55 @@ public class ClientTest {
             }
         }
     }
+
+    @Test
+    public void testCheckedActions() throws Exception {
+        byte[] row = UUID.randomUUID().toString().getBytes(Charsets.UTF_8);
+        byte[] column = randomAlphanumeric(10).getBytes(Charsets.UTF_8);
+
+        ColumnCheck check = ColumnCheck.newBuilder()
+                .setRow(row)
+                .setFamily(FAMILY)
+                .setQualifier(column)
+                .setValueNotPresent()
+                .build();
+
+        byte[] value = randomAlphanumeric(5).getBytes(Charsets.UTF_8);
+
+        Put put = new Put(row, System.currentTimeMillis());
+        put.add(FAMILY, column, value);
+
+        ListenableFuture<Boolean> future = client.checkAndPut(TABLE, check, put);
+        Boolean result = future.get();
+
+        assertTrue(result);
+
+        byte[] failedValue = randomAlphanumeric(6).getBytes(Charsets.UTF_8);
+        put = new Put(row, System.currentTimeMillis() + 1L);
+        put.add(FAMILY, column, failedValue);
+
+        future = client.checkAndPut(TABLE, check, put);
+        result = future.get();
+
+        assertFalse(result);
+
+        Delete delete = new Delete(row, System.currentTimeMillis() + 2L, null);
+
+        future = client.checkAndDelete(TABLE, check, delete);
+        result = future.get();
+
+        assertFalse(result);
+
+        ColumnCheck deleteCheck = ColumnCheck.newBuilder()
+                .setRow(row)
+                .setFamily(FAMILY)
+                .setQualifier(column)
+                .setRequiredValue(value)
+                .build();
+
+        future = client.checkAndDelete(TABLE, deleteCheck, delete);
+        result = future.get();
+
+        assertTrue(result);
+    }
 }

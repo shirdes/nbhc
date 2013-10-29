@@ -4,7 +4,6 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -14,7 +13,7 @@ import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import com.urbanairship.hbase.shc.request.*;
-import com.urbanairship.hbase.shc.response.RemoteError;
+import com.urbanairship.hbase.shc.response.BooleanResponseParser;
 import com.urbanairship.hbase.shc.response.VoidResponseParser;
 import com.urbanairship.hbase.shc.scan.*;
 import org.apache.hadoop.hbase.HRegionLocation;
@@ -24,7 +23,6 @@ import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
-import org.apache.hadoop.ipc.RemoteException;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -51,6 +49,12 @@ public class HbaseClient {
 
     private static final Method PUT_TARGET_METHOD = loadTargetMethod("put", new Class[]{byte[].class, Put.class});
     private static final Function<HbaseObjectWritable, Void> PUT_RESPONSE_PARSER = new VoidResponseParser("put");
+
+    private static final Method CHECK_AND_PUT_TARGET_METHOD = loadTargetMethod("checkAndPut", new Class[] {byte[].class, byte[].class, byte[].class, byte[].class, byte[].class, Put.class});
+    private static final Function<HbaseObjectWritable, Boolean> CHECK_AND_PUT_RESPONSE_PARSER = new BooleanResponseParser("checkAndPut");
+
+    private static final Method CHECK_AND_DELETE_TARGET_METHOD = loadTargetMethod("checkAndDelete", new Class[] {byte[].class, byte[].class, byte[].class, byte[].class, byte[].class, Delete.class});
+    private static final Function<HbaseObjectWritable, Boolean> CHECK_AND_DELETE_RESPONSE_PARSER = new BooleanResponseParser("checkAndDelete");
 
     private static final Method DELETE_TARGET_METHOD = loadTargetMethod("delete", new Class[]{byte[].class, Delete.class});
     private static final Function<HbaseObjectWritable, Void> DELETE_RESPONSE_PARSER = new VoidResponseParser("delete");
@@ -108,8 +112,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Result> get(String table, Get get) {
-        return simpleResultLocationAndParamRequest(table, get, ROW_OPERATION_ROW_EXRACTOR, GET_TARGET_METHOD,
-                new SimpleParseResponseProcessor<Result>(GET_RESPONSE_PARSER));
+        return simpleAction(table, GET_TARGET_METHOD, get, GET_RESPONSE_PARSER);
     }
 
     public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
@@ -128,21 +131,81 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
-        return simpleResultLocationAndParamRequest(table, put, ROW_OPERATION_ROW_EXRACTOR, PUT_TARGET_METHOD,
-                new SimpleParseResponseProcessor<Void>(PUT_RESPONSE_PARSER));
+        return simpleAction(table, PUT_TARGET_METHOD, put, PUT_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
         return multiMutationRequest(table, puts);
     }
 
+    public ListenableFuture<Boolean> checkAndPut(String table, ColumnCheck check, Put put) {
+        return checkedAction(table, CHECK_AND_PUT_TARGET_METHOD, check, put, CHECK_AND_PUT_RESPONSE_PARSER);
+    }
+
     public ListenableFuture<Void> delete(String table, Delete delete) {
-        return simpleResultLocationAndParamRequest(table, delete, ROW_OPERATION_ROW_EXRACTOR, DELETE_TARGET_METHOD,
-                new SimpleParseResponseProcessor<Void>(DELETE_RESPONSE_PARSER));
+        return simpleAction(table, DELETE_TARGET_METHOD, delete, DELETE_RESPONSE_PARSER);
     }
 
     public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
         return multiMutationRequest(table, deletes);
+    }
+
+    public ListenableFuture<Boolean> checkAndDelete(String table, ColumnCheck check, Delete delete) {
+        return checkedAction(table, CHECK_AND_DELETE_TARGET_METHOD, check, delete, CHECK_AND_DELETE_RESPONSE_PARSER);
+    }
+
+    private <A extends Row, R> ListenableFuture<R> simpleAction(String table,
+                                                                final Method targetMethod,
+                                                                final A action,
+                                                                Function<HbaseObjectWritable, R> responseParser) {
+
+        Function<HRegionLocation, Invocation> invocationBuilder = createLocationAndParamInvocationBuilder(targetMethod, action);
+        return singleRowRequest(table, action, invocationBuilder, responseParser);
+    }
+
+    private <A> Function<HRegionLocation, Invocation> createLocationAndParamInvocationBuilder(final Method targetMethod,
+                                                                                              final A action) {
+        return new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation invocationLocation) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        invocationLocation.getRegionInfo().getRegionName(),
+                        action
+                });
+            }
+        };
+    }
+
+    private <A extends Row> ListenableFuture<Boolean> checkedAction(String table,
+                                                                    final Method targetMethod,
+                                                                    final ColumnCheck check,
+                                                                    final A action,
+                                                                    Function<HbaseObjectWritable, Boolean> responseParser) {
+
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation location) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        location.getRegionInfo().getRegionName(),
+                        check.getRow(),
+                        check.getFamily(),
+                        check.getQualifier(),
+                        (check.getValue().isPresent()) ? check.getValue().get() : null,
+                        action
+                });
+            }
+        };
+
+        return singleRowRequest(table, action, invocationBuilder, responseParser);
+    }
+
+    private <A extends Row, R> ListenableFuture<R> singleRowRequest(String table,
+                                                                    A action,
+                                                                    Function<HRegionLocation, Invocation> invocationBuilder,
+                                                                    Function<HbaseObjectWritable, R> responseParser) {
+
+        SimpleParseResponseProcessor<R> processor = new SimpleParseResponseProcessor<R>(responseParser);
+        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, processor);
     }
 
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
@@ -190,7 +253,10 @@ public class HbaseClient {
             }
         };
 
-        return simpleResultLocationAndParamRequest(table, scan, rowExtractor, OPEN_SCANNER_TARGET_METHOD, responseProcessor);
+        Function<HRegionLocation, Invocation> invocationBuilder =
+                createLocationAndParamInvocationBuilder(OPEN_SCANNER_TARGET_METHOD, scan);
+
+        return singleActionRequest(table, scan, rowExtractor, invocationBuilder, responseProcessor);
     }
 
     private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
@@ -227,59 +293,28 @@ public class HbaseClient {
                                                                      long scannerId,
                                                                      int numResults) {
 
-        final Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
                 scannerId,
                 numResults
         });
 
-        final HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
+        HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
 
-        RequestController controller = new RequestController() {
-            @Override
-            public void handleResponse(HbaseObjectWritable received) {
-                Object object = received.get();
-                if (object == null) {
-                    future.communicateResult(ScannerBatchResult.allFinished());
-                    return;
-                }
+        ScannerNextBatchRequestController controller = new ScannerNextBatchRequestController(future);
 
-                if (!(object instanceof Result[])) {
-                    future.communicateError(new RuntimeException("Received result in scanner 'next' call that was not a Result[]"));
-                    return;
-                }
-
-                Result[] results = (Result[]) object;
-                ScannerBatchResult batchResult = (results.length == 0)
-                        ? ScannerBatchResult.noMoreResultsInRegion()
-                        : ScannerBatchResult.resultsReturned(ImmutableList.copyOf(results));
-
-                future.communicateResult(batchResult);
-            }
-
-            @Override
-            public void handleRemoteError(RemoteError error, int attempt) {
-                // TODO: need to understand error semantics like when a region moves.  How do we reopen a scanner
-                // TODO: if needed?
-                future.communicateError(new RemoteException(error.getErrorClass(),
-                        error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
-            }
-
-            @Override
-            public void handleLocalError(Throwable error, int attempt) {
-                // TODO: what do we do??
-            }
-        };
-
+        // TODO: what happens if the server says this region is not online or something and we should go back and find
+        // TODO: the updated region to issue the request to?  Somehow that will need to bubble all the way out to the
+        // TODO: state holder but don't want to tie this directly into that either :(
         sender.sendRequest(location, invocation, future, controller, 1);
 
         return future;
     }
 
-    private <P, R> ListenableFuture<R> simpleResultLocationAndParamRequest(final String table,
-                                                                           final P param,
-                                                                           final Function<? super P, byte[]> rowExtractor,
-                                                                           final Method targetMethod,
-                                                                           ResponseProcessor<R> responseProcessor) {
+    private <P, R> ListenableFuture<R> singleActionRequest(final String table,
+                                                           final P param,
+                                                           final Function<? super P, byte[]> rowExtractor,
+                                                           Function<HRegionLocation, Invocation> invocationBuilder,
+                                                           ResponseProcessor<R> responseProcessor) {
 
         HRegionLocation location = topology.getRegionServer(table, rowExtractor.apply(param));
 
@@ -287,16 +322,6 @@ public class HbaseClient {
             @Override
             public HRegionLocation get() {
                 return topology.getRegionServerNoCache(table, rowExtractor.apply(param));
-            }
-        };
-
-        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
-            @Override
-            public Invocation apply(HRegionLocation invocationLocation) {
-                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
-                        invocationLocation.getRegionInfo().getRegionName(),
-                        param
-                });
             }
         };
 
