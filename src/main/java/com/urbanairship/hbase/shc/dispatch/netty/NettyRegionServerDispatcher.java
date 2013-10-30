@@ -8,6 +8,7 @@ import com.urbanairship.hbase.shc.response.ResponseCallback;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.jboss.netty.channel.Channel;
+import org.jboss.netty.channel.Channels;
 
 public final class NettyRegionServerDispatcher implements RegionServerDispatcher {
 
@@ -24,10 +25,12 @@ public final class NettyRegionServerDispatcher implements RegionServerDispatcher
 
     @Override
     public int request(Operation operation, ResponseCallback callback) {
-        int requestId = requestManager.registerResponseCallback(callback);
-
         Channel channel = channelProvider.getChannel(operation.getTargetHost());
-        channel.write(new Request(requestId, operation));
+
+        int requestId = requestManager.registerResponseCallback(callback);
+        // TODO: not sure if the error handling will ensure that the callback will be removed if there is some low
+        // TODO: level socket error or something like that?
+        Channels.write(channel, new Request(requestId, operation));
 
         return requestId;
     }

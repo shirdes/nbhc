@@ -103,10 +103,14 @@ public class ClientTest {
         clientBootstrap.setOption("sendBufferSize", 16777216);
         clientBootstrap.setOption("tcpNoDelay", false);
 
+        channelProvider = new HostChannelProvider(clientBootstrap, 10);
+
         RequestManager requestManager = new RequestManager();
         DisconnectCallback disconnectCallback = new DisconnectCallback() {
             @Override
-            public void disconnected(Channel channel) { }
+            public void disconnected(Channel channel) {
+                channelProvider.removeChannel(channel);
+            }
         };
 
         clientBootstrap.setPipelineFactory(new HbaseClientPipelineFactory(requestManager, disconnectCallback));
@@ -114,7 +118,7 @@ public class ClientTest {
         HConnection hconn = HConnectionManager.createConnection(hbase.getHadoopConfiguration());
         RegionOwnershipTopology topology = new HConnectionRegionOwnershipTopology(hconn);
 
-        channelProvider = new HostChannelProvider(clientBootstrap);
+
         NettyRegionServerDispatcher dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
 
         RequestSender sender = new RequestSender(dispatcher);
