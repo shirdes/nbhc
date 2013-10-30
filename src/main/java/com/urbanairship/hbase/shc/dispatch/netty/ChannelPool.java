@@ -11,7 +11,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class ChannelPool {
+public final class ChannelPool {
 
     private final BlockingQueue<Channel> activeChannels = new LinkedBlockingQueue<Channel>();
     private final AtomicInteger activeChannelCount = new AtomicInteger(0);
