@@ -202,7 +202,7 @@ public class HostChannelProvider {
                 throw new RuntimeException("Interrupted waiting to retrieve active channel!");
             }
 
-            if (killed.remove(channel)) {
+            if (channel != null && killed.remove(channel)) {
                 channel = null;
             }
 
