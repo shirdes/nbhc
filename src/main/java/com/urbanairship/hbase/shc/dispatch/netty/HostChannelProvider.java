@@ -47,6 +47,10 @@ public class HostChannelProvider {
     }
 
     public void removeChannel(Channel channel) {
+        if (!active.get()) {
+            return;
+        }
+
         SocketAddress remote = channel.getRemoteAddress();
         if (!(remote instanceof InetSocketAddress)) {
             return;
