@@ -13,72 +13,20 @@ import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
 import com.urbanairship.hbase.shc.request.*;
-import com.urbanairship.hbase.shc.response.BooleanResponseParser;
-import com.urbanairship.hbase.shc.response.VoidResponseParser;
 import com.urbanairship.hbase.shc.scan.*;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
-import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.apache.hadoop.hbase.ipc.VersionedProtocol;
-import org.apache.hadoop.hbase.regionserver.HRegionServer;
 
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 
+import static com.urbanairship.hbase.shc.Protocol.*;
+
 public class HbaseClient {
-
-    private static final Class<? extends VersionedProtocol> TARGET_PROTOCOL = HRegionInterface.class;
-
-    private static final Method GET_TARGET_METHOD = loadTargetMethod("get", new Class[]{byte[].class, Get.class});
-    private static final Function<HbaseObjectWritable, Result> GET_RESPONSE_PARSER = new Function<HbaseObjectWritable, Result>() {
-        @Override
-        public Result apply(HbaseObjectWritable value) {
-            Object result = value.get();
-            if (!(result instanceof Result)) {
-                throw new RuntimeException(String.format("Expected response value of %s but received %s for 'get' operation",
-                        Result.class.getName(), result.getClass().getName()));
-            }
-
-            return (Result) result;
-        }
-    };
-
-    private static final Method PUT_TARGET_METHOD = loadTargetMethod("put", new Class[]{byte[].class, Put.class});
-    private static final Function<HbaseObjectWritable, Void> PUT_RESPONSE_PARSER = new VoidResponseParser("put");
-
-    private static final Method CHECK_AND_PUT_TARGET_METHOD = loadTargetMethod("checkAndPut", new Class[] {byte[].class, byte[].class, byte[].class, byte[].class, byte[].class, Put.class});
-    private static final Function<HbaseObjectWritable, Boolean> CHECK_AND_PUT_RESPONSE_PARSER = new BooleanResponseParser("checkAndPut");
-
-    private static final Method CHECK_AND_DELETE_TARGET_METHOD = loadTargetMethod("checkAndDelete", new Class[] {byte[].class, byte[].class, byte[].class, byte[].class, byte[].class, Delete.class});
-    private static final Function<HbaseObjectWritable, Boolean> CHECK_AND_DELETE_RESPONSE_PARSER = new BooleanResponseParser("checkAndDelete");
-
-    private static final Method DELETE_TARGET_METHOD = loadTargetMethod("delete", new Class[]{byte[].class, Delete.class});
-    private static final Function<HbaseObjectWritable, Void> DELETE_RESPONSE_PARSER = new VoidResponseParser("delete");
-
-    private static final Method MULTI_ACTION_TARGET_METHOD = loadTargetMethod("multi", new Class[]{MultiAction.class});
-
-    private static final Method OPEN_SCANNER_TARGET_METHOD = loadTargetMethod("openScanner", new Class[]{byte[].class, Scan.class});
-    private static final Function<HbaseObjectWritable, Long> OPEN_SCANNER_RESPONSE_PARSER = new Function<HbaseObjectWritable, Long>() {
-        @Override
-        public Long apply(HbaseObjectWritable value) {
-            Object object = value.get();
-            if (!(object instanceof Long)) {
-                throw new RuntimeException(String.format("Expected response value of %s but received %s for 'open scanner' operation",
-                        Long.class.getName(), object.getClass().getName()));
-            }
-
-            return (Long) object;
-        }
-    };
-
-    private static final Method CLOSE_SCANNER_TARGET_METHOD = loadTargetMethod("close", new Class[]{Long.TYPE});
-    private static final Function<HbaseObjectWritable, Void> CLOSE_SCANNER_RESPONSE_PARSER = new VoidResponseParser("close scanner");
-
-    private static final Method SCANNER_NEXT_TARGET_METHOD = loadTargetMethod("next", new Class[]{Long.TYPE, Integer.TYPE});
 
     private static final Function<Row, byte[]> ROW_OPERATION_ROW_EXRACTOR = new Function<Row, byte[]>() {
         @Override
@@ -86,15 +34,6 @@ public class HbaseClient {
             return operation.getRow();
         }
     };
-
-    private static Method loadTargetMethod(String methodName, Class<?>[] params) {
-        try {
-            return HRegionServer.class.getMethod(methodName, params);
-        }
-        catch (NoSuchMethodException e) {
-            throw new RuntimeException(String.format("Unable to load target method for '%s' operation", methodName));
-        }
-    }
 
     private final RegionOwnershipTopology topology;
     private final RequestSender sender;
