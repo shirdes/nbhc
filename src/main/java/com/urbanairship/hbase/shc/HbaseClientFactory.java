@@ -69,7 +69,7 @@ public final class HbaseClientFactory {
             }
         };
 
-        clientBootstrap.setPipelineFactory(new HbaseClientPipelineFactory(requestManager, disconnectCallback));
+        clientBootstrap.setPipelineFactory(new HbaseClientPipelineFactory(requestManager, disconnectCallback, channelProvider));
 
         HConnection hconn;
         try {

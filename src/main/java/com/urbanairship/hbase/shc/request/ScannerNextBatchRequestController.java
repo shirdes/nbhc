@@ -47,6 +47,7 @@ public final class ScannerNextBatchRequestController implements RequestControlle
 
     @Override
     public void handleLocalError(Throwable error, int attempt) {
-        // TODO: what do we do??
+        // TODO: what do we do??  Should we retry?  Probably...
+        resultBroker.communicateError(error);
     }
 }

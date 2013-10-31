@@ -62,6 +62,7 @@ public class DefaultRequestController<R> implements RequestController {
 
     @Override
     public void handleLocalError(Throwable error, int attempt) {
-        // TODO: implement.  Probably retry same as the remote error
+        // TODO: should we retry
+        resultBroker.communicateError(error);
     }
 }

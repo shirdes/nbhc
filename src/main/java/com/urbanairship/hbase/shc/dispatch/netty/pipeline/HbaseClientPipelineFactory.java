@@ -2,19 +2,24 @@ package com.urbanairship.hbase.shc.dispatch.netty.pipeline;
 
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.netty.DisconnectCallback;
+import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import org.jboss.netty.channel.ChannelPipeline;
 import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.Channels;
 import org.jboss.netty.handler.codec.frame.LengthFieldBasedFrameDecoder;
 
-public class HbaseClientPipelineFactory implements ChannelPipelineFactory {
+public final class HbaseClientPipelineFactory implements ChannelPipelineFactory {
 
     private final RequestManager requestManager;
     private final DisconnectCallback disconnectCallback;
+    private final HostChannelProvider channelProvider;
 
-    public HbaseClientPipelineFactory(RequestManager requestManager, DisconnectCallback disconnectCallback) {
+    public HbaseClientPipelineFactory(RequestManager requestManager,
+                                      DisconnectCallback disconnectCallback,
+                                      HostChannelProvider channelProvider) {
         this.requestManager = requestManager;
         this.disconnectCallback = disconnectCallback;
+        this.channelProvider = channelProvider;
     }
 
     @Override
@@ -31,7 +36,7 @@ public class HbaseClientPipelineFactory implements ChannelPipelineFactory {
         pipeline.addLast("response-decoder", new HbaseResponseDecoder());
         pipeline.addLast("connection-hello-message-encoder", new HbaseRegionConnectionHelloMessageEncoder());
         pipeline.addLast("request-encoder", new HbaseRequestEncoder());
-        pipeline.addLast("response-handler", new HbaseResponseHandler(requestManager));
+        pipeline.addLast("response-handler", new HbaseResponseHandler(requestManager, channelProvider));
         return pipeline;
     }
 }

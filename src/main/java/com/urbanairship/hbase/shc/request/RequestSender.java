@@ -33,8 +33,13 @@ public class RequestSender {
             }
 
             @Override
-            public void receiveError(RemoteError remoteError) {
+            public void receiveRemoteError(RemoteError remoteError) {
                 controller.handleRemoteError(remoteError, attempt);
+            }
+
+            @Override
+            public void receiveLocalError(Throwable error) {
+                controller.handleLocalError(error, attempt);
             }
         };
 

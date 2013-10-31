@@ -2,6 +2,7 @@ package com.urbanairship.hbase.shc.dispatch.netty.pipeline;
 
 import com.google.common.base.Optional;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
+import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.response.Response;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
 import org.apache.log4j.LogManager;
@@ -16,9 +17,11 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
     private static final Logger log = LogManager.getLogger(HbaseResponseHandler.class);
 
     private final RequestManager requestManager;
+    private final HostChannelProvider channelProvider;
 
-    public HbaseResponseHandler(RequestManager requestManager) {
+    public HbaseResponseHandler(RequestManager requestManager, HostChannelProvider channelProvider) {
         this.requestManager = requestManager;
+        this.channelProvider = channelProvider;
     }
 
     @Override
@@ -38,10 +41,10 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
         ResponseCallback callback = lookup.get();
         switch (response.getType()) {
             case LOCAL_ERROR:
-                // TODO: receive error should probably take an exception object
+                callback.receiveLocalError(response.getLocalError());
                 break;
             case REMOTE_ERROR:
-                callback.receiveError(response.getRemoteError());
+                callback.receiveRemoteError(response.getRemoteError());
                 break;
             case VALUE:
                 callback.receiveResponse(response.getValue());
@@ -51,6 +54,7 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception {
-        log.error("Exception caught in response handler", e.getCause());
+        log.error("Exception caught in response handler.  Removing channel.", e.getCause());
+        channelProvider.removeChannel(ctx.getChannel());
     }
 }

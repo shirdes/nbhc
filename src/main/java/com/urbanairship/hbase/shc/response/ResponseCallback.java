@@ -6,6 +6,8 @@ public interface ResponseCallback {
 
     void receiveResponse(HbaseObjectWritable value);
 
-    void receiveError(RemoteError remoteError);
+    void receiveRemoteError(RemoteError remoteError);
+
+    void receiveLocalError(Throwable error);
 
 }

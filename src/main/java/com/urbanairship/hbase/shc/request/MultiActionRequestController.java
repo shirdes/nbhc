@@ -81,6 +81,7 @@ public final class MultiActionRequestController<P> implements RequestController 
 
     @Override
     public void handleLocalError(Throwable error, int attempt) {
-        // TODO: implement
+        // TODO: should we retry?
+        resultBroker.communicateError(error);
     }
 }
