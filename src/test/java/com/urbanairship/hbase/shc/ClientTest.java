@@ -6,24 +6,18 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.urbanairship.hbase.environment.HBaseEnvironment;
 import com.urbanairship.hbase.managers.Schemas;
-import com.urbanairship.hbase.shc.dispatch.RequestManager;
-import com.urbanairship.hbase.shc.dispatch.netty.DisconnectCallback;
-import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
-import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
-import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
-import com.urbanairship.hbase.shc.request.RequestSender;
 import com.urbanairship.hbase.shc.scan.ScannerResultStream;
 import org.apache.commons.configuration.MapConfiguration;
 import org.apache.commons.lang.math.RandomUtils;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.jboss.netty.bootstrap.ClientBootstrap;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -32,14 +26,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
 import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class ClientTest {
 
@@ -49,8 +43,7 @@ public class ClientTest {
 
     private static HBaseEnvironment hbase;
 
-    private static NioClientSocketChannelFactory channelFactory;
-    private static HostChannelProvider channelProvider;
+    private static HbaseClientService clientService;
     private static HbaseClient client;
 
     @BeforeClass
@@ -67,69 +60,14 @@ public class ClientTest {
             Schemas.makeTableDescriptor(TABLE.getBytes(Charsets.UTF_8), Schemas.makeCfDesc(FAMILY, 1, StoreFile.BloomType.ROW, true)), splits
         ));
 
-        ThreadFactory bossThreadFactory = new ThreadFactoryBuilder()
-                .setDaemon(true)
-                .setNameFormat("Netty Boss Thread %d")
-                .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-                    @Override
-                    public void uncaughtException(Thread t, Throwable e) {
-                        e.printStackTrace();
-                    }
-                })
-                .build();
-
-        final ExecutorService boss = Executors.newFixedThreadPool(1, bossThreadFactory);
-
-        ThreadFactory workerThreadFactory = new ThreadFactoryBuilder()
-                .setDaemon(true)
-                .setNameFormat("Netty Worker Thread %d")
-                .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-                    @Override
-                    public void uncaughtException(Thread t, Throwable e) {
-                        e.printStackTrace();
-                    }
-                })
-                .build();
-
-        final ExecutorService workers = Executors.newFixedThreadPool(20, workerThreadFactory);
-
-        channelFactory = new NioClientSocketChannelFactory(boss, workers);
-        ClientBootstrap clientBootstrap = new ClientBootstrap(channelFactory);
-
-        clientBootstrap.setOption("keepAlive", true);
-
-        clientBootstrap.setOption("connectTimeoutMillis", 10000L);
-        clientBootstrap.setOption("receiveBufferSize", 16777216);
-        clientBootstrap.setOption("sendBufferSize", 16777216);
-        clientBootstrap.setOption("tcpNoDelay", false);
-
-        channelProvider = new HostChannelProvider(clientBootstrap, 10);
-
-        RequestManager requestManager = new RequestManager();
-        DisconnectCallback disconnectCallback = new DisconnectCallback() {
-            @Override
-            public void disconnected(Channel channel) {
-                channelProvider.removeChannel(channel);
-            }
-        };
-
-        clientBootstrap.setPipelineFactory(new HbaseClientPipelineFactory(requestManager, disconnectCallback));
-
-        HConnection hconn = HConnectionManager.createConnection(hbase.getHadoopConfiguration());
-        RegionOwnershipTopology topology = new HConnectionRegionOwnershipTopology(hconn);
-
-
-        NettyRegionServerDispatcher dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
-
-        RequestSender sender = new RequestSender(dispatcher);
-        client = new HbaseClient(topology, sender, requestManager, 1);
+        clientService = HbaseClientFactory.create(hbase.getHadoopConfiguration());
+        clientService.startAndWait();
+        client = clientService.getClient();
     }
 
     @AfterClass
     public static void tearDown() throws Exception {
-        channelProvider.shutdown();
-        channelFactory.releaseExternalResources();
-
+        clientService.stopAndWait();
         hbase.stop();
     }
 
@@ -310,5 +248,26 @@ public class ClientTest {
         result = future.get();
 
         assertTrue(result);
+    }
+
+    @Test
+    public void testIncrement() throws Exception {
+        byte[] qualifier = randomAlphanumeric(10).getBytes(Charsets.UTF_8);
+
+        Column column = Column.newBuilder()
+                .setRow(UUID.randomUUID().toString().getBytes(Charsets.UTF_8))
+                .setFamily(FAMILY)
+                .setQualifier(qualifier)
+                .build();
+
+        ListenableFuture<Long> future = client.incrementColumnValue(TABLE, column, 7);
+        Long result = future.get();
+
+        assertEquals(7, result.longValue());
+
+        future = client.incrementColumnValue(TABLE, column, 17);
+        result = future.get();
+
+        assertEquals(17 + 7, result.longValue());
     }
 }

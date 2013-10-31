@@ -12,10 +12,29 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.urbanairship.hbase.shc.dispatch.HbaseOperationResultFuture;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.ResultBroker;
-import com.urbanairship.hbase.shc.request.*;
-import com.urbanairship.hbase.shc.scan.*;
+import com.urbanairship.hbase.shc.request.DefaultRequestController;
+import com.urbanairship.hbase.shc.request.MultiActionRequestController;
+import com.urbanairship.hbase.shc.request.RequestSender;
+import com.urbanairship.hbase.shc.request.ResponseProcessor;
+import com.urbanairship.hbase.shc.request.ScannerNextBatchRequestController;
+import com.urbanairship.hbase.shc.request.SimpleParseResponseProcessor;
+import com.urbanairship.hbase.shc.scan.ScanCloser;
+import com.urbanairship.hbase.shc.scan.ScanOpener;
+import com.urbanairship.hbase.shc.scan.ScanOperationConfig;
+import com.urbanairship.hbase.shc.scan.ScanResultsLoader;
+import com.urbanairship.hbase.shc.scan.ScanStateHolder;
+import com.urbanairship.hbase.shc.scan.ScannerBatchResult;
+import com.urbanairship.hbase.shc.scan.ScannerOpenResult;
+import com.urbanairship.hbase.shc.scan.ScannerResultStream;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Action;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.MultiAction;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 
@@ -93,60 +112,6 @@ public class HbaseClient {
         return checkedAction(table, CHECK_AND_DELETE_TARGET_METHOD, check, delete, CHECK_AND_DELETE_RESPONSE_PARSER);
     }
 
-    private <A extends Row, R> ListenableFuture<R> simpleAction(String table,
-                                                                final Method targetMethod,
-                                                                final A action,
-                                                                Function<HbaseObjectWritable, R> responseParser) {
-
-        Function<HRegionLocation, Invocation> invocationBuilder = createLocationAndParamInvocationBuilder(targetMethod, action);
-        return singleRowRequest(table, action, invocationBuilder, responseParser);
-    }
-
-    private <A> Function<HRegionLocation, Invocation> createLocationAndParamInvocationBuilder(final Method targetMethod,
-                                                                                              final A action) {
-        return new Function<HRegionLocation, Invocation>() {
-            @Override
-            public Invocation apply(HRegionLocation invocationLocation) {
-                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
-                        invocationLocation.getRegionInfo().getRegionName(),
-                        action
-                });
-            }
-        };
-    }
-
-    private <A extends Row> ListenableFuture<Boolean> checkedAction(String table,
-                                                                    final Method targetMethod,
-                                                                    final ColumnCheck check,
-                                                                    final A action,
-                                                                    Function<HbaseObjectWritable, Boolean> responseParser) {
-
-        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
-            @Override
-            public Invocation apply(HRegionLocation location) {
-                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
-                        location.getRegionInfo().getRegionName(),
-                        check.getRow(),
-                        check.getFamily(),
-                        check.getQualifier(),
-                        (check.getValue().isPresent()) ? check.getValue().get() : null,
-                        action
-                });
-            }
-        };
-
-        return singleRowRequest(table, action, invocationBuilder, responseParser);
-    }
-
-    private <A extends Row, R> ListenableFuture<R> singleRowRequest(String table,
-                                                                    A action,
-                                                                    Function<HRegionLocation, Invocation> invocationBuilder,
-                                                                    Function<HbaseObjectWritable, R> responseParser) {
-
-        SimpleParseResponseProcessor<R> processor = new SimpleParseResponseProcessor<R>(responseParser);
-        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, processor);
-    }
-
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
         // TODO: ensure that the Scan object has a value set for caching?  Otherwise we'd have to have a default given
         // TODO: to this client as a data member?
@@ -178,6 +143,89 @@ public class HbaseClient {
         );
 
         return new ScannerResultStream(stateHolder);
+    }
+
+    public ListenableFuture<Long> incrementColumnValue(String table, final Column column, final long amount) {
+        Function<Object, byte[]> rowExtractor = Functions.constant(column.getRow());
+
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation location) {
+                return new Invocation(INCREMENT_COL_VALUE_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+                        location.getRegionInfo().getRegionName(),
+                        column.getRow(),
+                        column.getFamily(),
+                        column.getQualifier(),
+                        amount,
+                        true
+                });
+            }
+        };
+
+        // TODO: this should be a singleton
+        ResponseProcessor<Long> responseProcessor = new ResponseProcessor<Long>() {
+            @Override
+            public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<Long> resultBroker) {
+                resultBroker.communicateResult(INCREMENT_COL_VALUE_RESPONSE_PARSER.apply(received));
+            }
+        };
+
+        return singleActionRequest(table, column, rowExtractor, invocationBuilder, responseProcessor);
+    }
+
+    private <A extends Row, R> ListenableFuture<R> simpleAction(String table,
+                                                                final Method targetMethod,
+                                                                final A action,
+                                                                Function<HbaseObjectWritable, R> responseParser) {
+
+        Function<HRegionLocation, Invocation> invocationBuilder = createLocationAndParamInvocationBuilder(targetMethod, action);
+        return singleRowRequest(table, action, invocationBuilder, responseParser);
+    }
+
+    private <A> Function<HRegionLocation, Invocation> createLocationAndParamInvocationBuilder(final Method targetMethod,
+                                                                                              final A action) {
+        return new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation invocationLocation) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        invocationLocation.getRegionInfo().getRegionName(),
+                        action
+                });
+            }
+        };
+    }
+
+    private <A extends Row> ListenableFuture<Boolean> checkedAction(String table,
+                                                                    final Method targetMethod,
+                                                                    final ColumnCheck check,
+                                                                    final A action,
+                                                                    Function<HbaseObjectWritable, Boolean> responseParser) {
+
+        final Column column = check.getColumn();
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation location) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        location.getRegionInfo().getRegionName(),
+                        column.getRow(),
+                        column.getFamily(),
+                        column.getQualifier(),
+                        (check.getValue().isPresent()) ? check.getValue().get() : null,
+                        action
+                });
+            }
+        };
+
+        return singleRowRequest(table, action, invocationBuilder, responseParser);
+    }
+
+    private <A extends Row, R> ListenableFuture<R> singleRowRequest(String table,
+                                                                    A action,
+                                                                    Function<HRegionLocation, Invocation> invocationBuilder,
+                                                                    Function<HbaseObjectWritable, R> responseParser) {
+
+        SimpleParseResponseProcessor<R> processor = new SimpleParseResponseProcessor<R>(responseParser);
+        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, processor);
     }
 
     private ListenableFuture<ScannerOpenResult> openScanner(final String table, final Scan scan) {

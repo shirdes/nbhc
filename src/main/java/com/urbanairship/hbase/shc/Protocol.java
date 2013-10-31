@@ -42,23 +42,15 @@ public final class Protocol {
     public static final Method MULTI_ACTION_TARGET_METHOD = loadTargetMethod("multi", new Class[]{MultiAction.class});
 
     public static final Method OPEN_SCANNER_TARGET_METHOD = loadTargetMethod("openScanner", new Class[]{byte[].class, Scan.class});
-    public static final Function<HbaseObjectWritable, Long> OPEN_SCANNER_RESPONSE_PARSER = new Function<HbaseObjectWritable, Long>() {
-        @Override
-        public Long apply(HbaseObjectWritable value) {
-            Object object = value.get();
-            if (!(object instanceof Long)) {
-                throw new RuntimeException(String.format("Expected response value of %s but received %s for 'open scanner' operation",
-                        Long.class.getName(), object.getClass().getName()));
-            }
-
-            return (Long) object;
-        }
-    };
+    public static final Function<HbaseObjectWritable, Long> OPEN_SCANNER_RESPONSE_PARSER = new LongResponseParser("openScanner");
 
     public static final Method CLOSE_SCANNER_TARGET_METHOD = loadTargetMethod("close", new Class[]{Long.TYPE});
-    public static final Function<HbaseObjectWritable, Void> CLOSE_SCANNER_RESPONSE_PARSER = new VoidResponseParser("close scanner");
+    public static final Function<HbaseObjectWritable, Void> CLOSE_SCANNER_RESPONSE_PARSER = new VoidResponseParser("closeScanner");
 
     public static final Method SCANNER_NEXT_TARGET_METHOD = loadTargetMethod("next", new Class[]{Long.TYPE, Integer.TYPE});
+
+    public static final Method INCREMENT_COL_VALUE_TARGET_METHOD = loadTargetMethod("incrementColumnValue", new Class[]{byte[].class, byte[].class, byte[].class, byte[].class, Long.TYPE, Boolean.TYPE});
+    public static final Function<HbaseObjectWritable, Long> INCREMENT_COL_VALUE_RESPONSE_PARSER = new LongResponseParser("incrementColumnValue");
 
     public static Method loadTargetMethod(String methodName, Class<?>[] params) {
         try {
@@ -108,6 +100,26 @@ public final class Protocol {
             }
 
             return (Boolean) object;
+        }
+    }
+
+    private static final class LongResponseParser implements Function<HbaseObjectWritable, Long> {
+
+        private final String operationName;
+
+        private LongResponseParser(String operationName) {
+            this.operationName = operationName;
+        }
+
+        @Override
+        public Long apply(HbaseObjectWritable value) {
+            Object object = value.get();
+            if (!(object instanceof Long)) {
+                throw new RuntimeException(String.format("Expected response value of %s but received %s for '%s' operation",
+                        Long.class.getName(), object.getClass().getName(), operationName));
+            }
+
+            return (Long) object;
         }
     }
 }
