@@ -9,7 +9,7 @@ import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
 import com.urbanairship.hbase.shc.request.RequestSender;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.ZooKeeperConnectionException;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.jboss.netty.bootstrap.ClientBootstrap;
@@ -47,7 +47,7 @@ public final class HbaseClientFactory {
                 })
                 .build();
 
-        final ExecutorService workers = Executors.newFixedThreadPool(20, workerThreadFactory);
+        final ExecutorService workers = Executors.newFixedThreadPool(200, workerThreadFactory);
 
         NioClientSocketChannelFactory channelFactory = new NioClientSocketChannelFactory(boss, workers);
         ClientBootstrap clientBootstrap = new ClientBootstrap(channelFactory);
@@ -74,8 +74,9 @@ public final class HbaseClientFactory {
         HConnection hconn;
         try {
             hconn = HConnectionManager.createConnection(hbaseConfig);
+            hconn.getRegionLocation(HConstants.ROOT_TABLE_NAME, HConstants.EMPTY_BYTE_ARRAY, false);
         }
-        catch (ZooKeeperConnectionException e) {
+        catch (Exception e) {
             throw new RuntimeException("Error creating hbase connection", e);
         }
 
