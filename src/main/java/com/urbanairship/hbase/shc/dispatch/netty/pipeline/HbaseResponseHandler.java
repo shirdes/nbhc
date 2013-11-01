@@ -1,6 +1,8 @@
 package com.urbanairship.hbase.shc.dispatch.netty.pipeline;
 
+import com.codahale.metrics.Meter;
 import com.google.common.base.Optional;
+import com.urbanairship.hbase.shc.HbaseClientMetrics;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
 import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.response.Response;
@@ -15,6 +17,8 @@ import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
 public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
 
     private static final Logger log = LogManager.getLogger(HbaseResponseHandler.class);
+
+    private static final Meter RESPONSES_RECEIVED_METER = HbaseClientMetrics.meter("HbaseResponseHandler:ResponsesReceived");
 
     private final RequestManager requestManager;
     private final HostChannelProvider channelProvider;
@@ -31,6 +35,8 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
             super.messageReceived(ctx, e);
             return;
         }
+
+        RESPONSES_RECEIVED_METER.mark();
 
         Response response = (Response) message;
         Optional<ResponseCallback> lookup = requestManager.retrieveCallback(response.getRequestId());

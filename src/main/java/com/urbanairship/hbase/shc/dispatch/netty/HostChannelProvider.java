@@ -1,8 +1,10 @@
 package com.urbanairship.hbase.shc.dispatch.netty;
 
+import com.codahale.metrics.Timer;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.net.HostAndPort;
+import com.urbanairship.hbase.shc.HbaseClientMetrics;
 import com.urbanairship.hbase.shc.dispatch.ConnectionHelloMessage;
 import org.jboss.netty.bootstrap.ClientBootstrap;
 import org.jboss.netty.channel.Channel;
@@ -16,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HostChannelProvider {
+
+    private static final Timer GET_CHANNEL_TIMER = HbaseClientMetrics.timer("Netty:ChannelProvider:GetChannel");
 
     private final AtomicBoolean active = new AtomicBoolean(true);
 
@@ -39,18 +43,24 @@ public class HostChannelProvider {
     public Channel getChannel(HostAndPort host) {
         Preconditions.checkState(active.get());
 
-        InetSocketAddress addr = new InetSocketAddress(host.getHostText(), host.getPort());
+        Timer.Context time = GET_CHANNEL_TIMER.time();
+        try {
+            InetSocketAddress addr = new InetSocketAddress(host.getHostText(), host.getPort());
 
-        ChannelPool pool = hostPools.get(addr);
-        if (pool == null) {
-            pool = new ChannelPool(addr, channelCreator, maxConnectionsPerHost);
-            ChannelPool had = hostPools.putIfAbsent(addr, pool);
-            if (had != null) {
-                pool = had;
+            ChannelPool pool = hostPools.get(addr);
+            if (pool == null) {
+                pool = new ChannelPool(addr, channelCreator, maxConnectionsPerHost);
+                ChannelPool had = hostPools.putIfAbsent(addr, pool);
+                if (had != null) {
+                    pool = had;
+                }
             }
-        }
 
-        return pool.getChannel();
+            return pool.getChannel();
+        }
+        finally {
+            time.stop();
+        }
     }
 
     public void removeChannel(Channel channel) {

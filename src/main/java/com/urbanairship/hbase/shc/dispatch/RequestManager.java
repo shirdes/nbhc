@@ -1,6 +1,8 @@
 package com.urbanairship.hbase.shc.dispatch;
 
+import com.codahale.metrics.Gauge;
 import com.google.common.base.Optional;
+import com.urbanairship.hbase.shc.HbaseClientMetrics;
 import com.urbanairship.hbase.shc.response.ResponseCallback;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,6 +14,15 @@ public class RequestManager {
     private final AtomicInteger ids = new AtomicInteger(0);
 
     private final ConcurrentMap<Integer, ResponseCallback> responseCallbacks = new ConcurrentHashMap<Integer, ResponseCallback>();
+
+    public RequestManager() {
+        HbaseClientMetrics.gauge("RequestManager:OutstandingCallbacks", new Gauge<Integer>() {
+            @Override
+            public Integer getValue() {
+                return responseCallbacks.size();
+            }
+        });
+    }
 
     public int registerResponseCallback(ResponseCallback callback) {
         int requestId = ids.getAndIncrement();

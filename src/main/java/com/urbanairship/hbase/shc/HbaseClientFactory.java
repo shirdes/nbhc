@@ -1,5 +1,6 @@
 package com.urbanairship.hbase.shc;
 
+import com.codahale.metrics.Gauge;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.urbanairship.hbase.shc.dispatch.RequestManager;
@@ -16,9 +17,7 @@ import org.jboss.netty.bootstrap.ClientBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.*;
 
 public final class HbaseClientFactory {
 
@@ -34,7 +33,7 @@ public final class HbaseClientFactory {
                 })
                 .build();
 
-        final ExecutorService boss = Executors.newFixedThreadPool(1, bossThreadFactory);
+        ExecutorService boss = Executors.newFixedThreadPool(1, bossThreadFactory);
 
         ThreadFactory workerThreadFactory = new ThreadFactoryBuilder()
                 .setDaemon(true)
@@ -47,7 +46,19 @@ public final class HbaseClientFactory {
                 })
                 .build();
 
-        final ExecutorService workers = Executors.newFixedThreadPool(200, workerThreadFactory);
+        // TODO: expose to config
+        final LinkedBlockingQueue<Runnable> nettyWorkerQueue = new LinkedBlockingQueue<Runnable>();
+        ExecutorService workers = new ThreadPoolExecutor(200, 200,
+                0L, TimeUnit.MILLISECONDS,
+                nettyWorkerQueue,
+                workerThreadFactory);
+
+        HbaseClientMetrics.gauge("Netty:WorkerQueueSize", new Gauge<Integer>() {
+            @Override
+            public Integer getValue() {
+                return nettyWorkerQueue.size();
+            }
+        });
 
         NioClientSocketChannelFactory channelFactory = new NioClientSocketChannelFactory(boss, workers);
         ClientBootstrap clientBootstrap = new ClientBootstrap(channelFactory);
