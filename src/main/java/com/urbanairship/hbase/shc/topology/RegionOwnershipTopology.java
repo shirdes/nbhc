@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc;
+package com.urbanairship.hbase.shc.topology;
 
 import org.apache.hadoop.hbase.HRegionLocation;
 

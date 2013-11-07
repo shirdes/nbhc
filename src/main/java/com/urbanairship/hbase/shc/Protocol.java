@@ -14,18 +14,7 @@ public final class Protocol {
     public static final Class<? extends VersionedProtocol> TARGET_PROTOCOL = HRegionInterface.class;
 
     public static final Method GET_TARGET_METHOD = loadTargetMethod("get", new Class[]{byte[].class, Get.class});
-    public static final Function<HbaseObjectWritable, Result> GET_RESPONSE_PARSER = new Function<HbaseObjectWritable, Result>() {
-        @Override
-        public Result apply(HbaseObjectWritable value) {
-            Object result = value.get();
-            if (!(result instanceof Result)) {
-                throw new RuntimeException(String.format("Expected response value of %s but received %s for 'get' operation",
-                        Result.class.getName(), result.getClass().getName()));
-            }
-
-            return (Result) result;
-        }
-    };
+    public static final Function<HbaseObjectWritable, Result> GET_RESPONSE_PARSER = new ResultObjectParser("get");
 
     public static final Method PUT_TARGET_METHOD = loadTargetMethod("put", new Class[]{byte[].class, Put.class});
     public static final Function<HbaseObjectWritable, Void> PUT_RESPONSE_PARSER = new VoidResponseParser("put");
@@ -51,6 +40,9 @@ public final class Protocol {
 
     public static final Method INCREMENT_COL_VALUE_TARGET_METHOD = loadTargetMethod("incrementColumnValue", new Class[]{byte[].class, byte[].class, byte[].class, byte[].class, Long.TYPE, Boolean.TYPE});
     public static final Function<HbaseObjectWritable, Long> INCREMENT_COL_VALUE_RESPONSE_PARSER = new LongResponseParser("incrementColumnValue");
+
+    public static final Method GET_CLOSEST_ROW_BEFORE_METHOD = loadTargetMethod("getClosestRowBefore", new Class[]{byte[].class, byte[].class, byte[].class});
+    public static final Function<HbaseObjectWritable, Result> GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER = new ResultObjectParser("getClosestRowBefore");
 
     public static Method loadTargetMethod(String methodName, Class<?>[] params) {
         try {
@@ -120,6 +112,26 @@ public final class Protocol {
             }
 
             return (Long) object;
+        }
+    }
+
+    private static final class ResultObjectParser implements Function<HbaseObjectWritable, Result> {
+
+        private final String operationName;
+
+        private ResultObjectParser(String operationName) {
+            this.operationName = operationName;
+        }
+
+        @Override
+        public Result apply(HbaseObjectWritable value) {
+            Object result = value.get();
+            if (!(result instanceof Result)) {
+                throw new RuntimeException(String.format("Expected response value of %s but received %s for '%s' operation",
+                        Result.class.getName(), result.getClass().getName(), operationName));
+            }
+
+            return (Result) result;
         }
     }
 }

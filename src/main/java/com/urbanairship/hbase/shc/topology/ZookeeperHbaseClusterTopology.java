@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc;
+package com.urbanairship.hbase.shc.topology;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Preconditions;

@@ -1,7 +1,8 @@
-package com.urbanairship.hbase.shc;
+package com.urbanairship.hbase.shc.topology;
 
 import com.codahale.metrics.Timer;
 import com.google.common.base.Charsets;
+import com.urbanairship.hbase.shc.HbaseClientMetrics;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.HConnection;
 

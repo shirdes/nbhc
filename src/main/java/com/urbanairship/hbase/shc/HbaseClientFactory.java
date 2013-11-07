@@ -9,6 +9,8 @@ import com.urbanairship.hbase.shc.dispatch.netty.HostChannelProvider;
 import com.urbanairship.hbase.shc.dispatch.netty.NettyRegionServerDispatcher;
 import com.urbanairship.hbase.shc.dispatch.netty.pipeline.HbaseClientPipelineFactory;
 import com.urbanairship.hbase.shc.request.RequestSender;
+import com.urbanairship.hbase.shc.topology.HConnectionRegionOwnershipTopology;
+import com.urbanairship.hbase.shc.topology.RegionOwnershipTopology;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.HConnection;
@@ -95,7 +97,7 @@ public final class HbaseClientFactory {
 
         NettyRegionServerDispatcher dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
 
-        RequestSender sender = new RequestSender(dispatcher);
+        RequestSender sender = new RequestSender(dispatcher, topology, requestManager);
 
         HbaseClient client = new HbaseClient(topology, sender, requestManager, 1);
 

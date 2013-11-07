@@ -1,22 +1,15 @@
 package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Charsets;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.urbanairship.hbase.environment.HBaseEnvironment;
-import com.urbanairship.hbase.managers.Schemas;
 import com.urbanairship.hbase.shc.scan.ScannerResultStream;
-import org.apache.commons.configuration.MapConfiguration;
 import org.apache.commons.lang.math.RandomUtils;
-import org.apache.hadoop.hbase.client.Delete;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.regionserver.StoreFile;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -30,10 +23,7 @@ import java.util.concurrent.Future;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
 import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class ClientTest {
 
@@ -41,26 +31,16 @@ public class ClientTest {
     private static final byte[] FAMILY = "f".getBytes(Charsets.UTF_8);
     private static final byte[] COL = "c".getBytes(Charsets.UTF_8);
 
-    private static HBaseEnvironment hbase;
-
     private static HbaseClientService clientService;
     private static HbaseClient client;
 
     @BeforeClass
     public static void setUp() throws Exception {
-        hbase = new HBaseEnvironment(new MapConfiguration(ImmutableMap.of()));
-        hbase.startAndWait();
+        Configuration config = HBaseConfiguration.create();
+        config.set("zookeeper.znode.parent", "/hbase");
+        config.set("hbase.zookeeper.quorum", "localhost:2181");
 
-        byte[][] splits = new byte[16][];
-        for (int i = 0; i < 16; i++) {
-            splits[i] = Integer.toString(i).getBytes(Charsets.UTF_8);
-        }
-
-        Schemas.run(hbase.getHadoopConfiguration(), ImmutableMap.of(
-            Schemas.makeTableDescriptor(TABLE.getBytes(Charsets.UTF_8), Schemas.makeCfDesc(FAMILY, 1, StoreFile.BloomType.ROW, true)), splits
-        ));
-
-        clientService = HbaseClientFactory.create(hbase.getHadoopConfiguration());
+        clientService = HbaseClientFactory.create(config);
         clientService.startAndWait();
         client = clientService.getClient();
     }
@@ -68,7 +48,6 @@ public class ClientTest {
     @AfterClass
     public static void tearDown() throws Exception {
         clientService.stopAndWait();
-        hbase.stop();
     }
 
     @Test
@@ -150,6 +129,7 @@ public class ClientTest {
                 Result result = stream.next();
 
                 String key = Bytes.toString(result.getRow());
+                if (!entries.containsKey(key)) continue;
 
                 assertEquals(1, result.getFamilyMap(FAMILY).size());
                 assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
