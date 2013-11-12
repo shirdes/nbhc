@@ -10,15 +10,15 @@ import org.apache.hadoop.hbase.client.Result;
 
 import java.util.Arrays;
 
-public class MetaTable {
+public class MetaTableLookupSource {
 
     private final RootTable rootTable;
     private final TopologyOperationsClient operationsClient;
     private final TopologyUtil util;
 
-    public MetaTable(RootTable rootTable,
-                     TopologyOperationsClient operationsClient,
-                     TopologyUtil util) {
+    public MetaTableLookupSource(RootTable rootTable,
+                                 TopologyOperationsClient operationsClient,
+                                 TopologyUtil util) {
         this.rootTable = rootTable;
         this.operationsClient = operationsClient;
         this.util = util;
