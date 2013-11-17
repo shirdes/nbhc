@@ -1,6 +1,7 @@
 package com.urbanairship.hbase.shc.topology;
 
 import com.google.common.base.Charsets;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import org.apache.hadoop.hbase.HConstants;
@@ -12,19 +13,18 @@ import java.util.Arrays;
 
 public class MetaTableLookupSource {
 
-    private final RootTable rootTable;
     private final TopologyOperationsClient operationsClient;
     private final TopologyUtil util;
 
-    public MetaTableLookupSource(RootTable rootTable,
-                                 TopologyOperationsClient operationsClient,
+    public MetaTableLookupSource(TopologyOperationsClient operationsClient,
                                  TopologyUtil util) {
-        this.rootTable = rootTable;
         this.operationsClient = operationsClient;
         this.util = util;
     }
 
-    public HRegionLocation getLocation(String table, byte[] row) {
+    public HRegionLocation getLocation(String table,
+                                       byte[] row,
+                                       final Function<byte[], HRegionLocation> metaLocationLookup) {
         // TODO: cache lookup...
 
         byte[] tableNameBytes = table.getBytes(Charsets.UTF_8);
@@ -33,7 +33,7 @@ public class MetaTableLookupSource {
         Supplier<HRegionLocation> locationSupplier = new Supplier<HRegionLocation>() {
             @Override
             public HRegionLocation get() {
-                return rootTable.getMetaLocation(metaKey);
+                return metaLocationLookup.apply(metaKey);
             }
         };
 
