@@ -5,8 +5,10 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.urbanairship</groupId>
-  <artifactId>shc</artifactId>
+  <artifactId>nbhc</artifactId>
   <version>0.1-SNAPSHOT</version>
+
+  <description>Netty based HBase client</description>
 
   <!--
     TODO <build> section with all the bells and whistles
@@ -14,12 +16,12 @@
 
   <dependencies>
 
-    <dependency>
-      <groupId>com.urbanairship.hbase</groupId>
-      <artifactId>hbase-tools-test-utils</artifactId>
-      <version>1.1.0</version>
-      <scope>test</scope>
-    </dependency>
+    <!--<dependency>-->
+      <!--<groupId>com.urbanairship.hbase</groupId>-->
+      <!--<artifactId>hbase-tools-test-utils</artifactId>-->
+      <!--<version>1.1.0</version>-->
+      <!--<scope>test</scope>-->
+    <!--</dependency>-->
 
     <dependency>
       <groupId>org.apache.hbase</groupId>
