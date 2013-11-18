@@ -16,6 +16,21 @@
 
   <dependencies>
 
+    <dependency>
+      <groupId>com.urbanairship.nbhc</groupId>
+      <artifactId>common</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>com.urbanairship.nbhc</groupId>
+      <artifactId>netty</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>com.urbanairship.nbhc</groupId>
+      <artifactId>topology</artifactId>
+    </dependency>
+
     <!--<dependency>-->
     <!--<groupId>com.urbanairship.hbase</groupId>-->
     <!--<artifactId>hbase-tools-test-utils</artifactId>-->

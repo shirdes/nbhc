@@ -13,10 +13,10 @@ import java.util.Arrays;
 
 public class MetaTableLookupSource {
 
-    private final TopologyOperationsClient operationsClient;
+    private final TopologyOperations operationsClient;
     private final TopologyUtil util;
 
-    public MetaTableLookupSource(TopologyOperationsClient operationsClient,
+    public MetaTableLookupSource(TopologyOperations operationsClient,
                                  TopologyUtil util) {
         this.operationsClient = operationsClient;
         this.util = util;

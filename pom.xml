@@ -13,6 +13,9 @@
 
   <modules>
     <module>client</module>
+    <module>common</module>
+    <module>netty</module>
+    <module>topology</module>
   </modules>
 
   <!--
@@ -21,6 +24,24 @@
 
   <dependencyManagement>
     <dependencies>
+
+      <dependency>
+        <groupId>com.urbanairship.nbhc</groupId>
+        <artifactId>common</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>com.urbanairship.nbhc</groupId>
+        <artifactId>netty</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>com.urbanairship.nbhc</groupId>
+        <artifactId>topology</artifactId>
+        <version>${project.version}</version>
+      </dependency>
 
       <!--<dependency>-->
       <!--<groupId>com.urbanairship.hbase</groupId>-->

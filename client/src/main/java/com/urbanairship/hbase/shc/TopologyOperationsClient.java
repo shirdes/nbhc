@@ -1,4 +1,4 @@
-package com.urbanairship.hbase.shc.topology;
+package com.urbanairship.hbase.shc;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Function;
@@ -9,6 +9,7 @@ import com.urbanairship.hbase.shc.request.DefaultRequestController;
 import com.urbanairship.hbase.shc.request.OperationFutureSupplier;
 import com.urbanairship.hbase.shc.request.RequestSender;
 import com.urbanairship.hbase.shc.request.SimpleParseResponseProcessor;
+import com.urbanairship.hbase.shc.topology.TopologyOperations;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Result;
@@ -16,7 +17,7 @@ import org.apache.hadoop.hbase.ipc.Invocation;
 
 import static com.urbanairship.hbase.shc.Protocol.*;
 
-public class TopologyOperationsClient {
+public class TopologyOperationsClient implements TopologyOperations {
 
     private final RequestSender sender;
     private final OperationFutureSupplier futureSupplier;
@@ -28,6 +29,7 @@ public class TopologyOperationsClient {
         this.maxRetries = maxRetries;
     }
 
+    @Override
     public Optional<Result> getRowOrBefore(byte[] row, Supplier<HRegionLocation> locationSupplier) {
         HRegionLocation location = locationSupplier.get();
         final Invocation invocation = new Invocation(GET_CLOSEST_ROW_BEFORE_METHOD, TARGET_PROTOCOL, new Object[]{

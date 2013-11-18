@@ -20,11 +20,11 @@ public class RootTableLookupSource {
     };
 
     private final HbaseClusterTopology clusterTopology;
-    private final TopologyOperationsClient operationsClient;
+    private final TopologyOperations operationsClient;
     private final TopologyUtil util;
 
     public RootTableLookupSource(HbaseClusterTopology clusterTopology,
-                                 TopologyOperationsClient operationsClient,
+                                 TopologyOperations operationsClient,
                                  TopologyUtil util) {
         this.clusterTopology = clusterTopology;
         this.operationsClient = operationsClient;
