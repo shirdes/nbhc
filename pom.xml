@@ -6,72 +6,79 @@
 
   <groupId>com.urbanairship</groupId>
   <artifactId>nbhc</artifactId>
+  <packaging>pom</packaging>
   <version>0.1-SNAPSHOT</version>
 
   <description>Netty based HBase client</description>
+
+  <modules>
+    <module>client</module>
+  </modules>
 
   <!--
     TODO <build> section with all the bells and whistles
     -->
 
-  <dependencies>
+  <dependencyManagement>
+    <dependencies>
 
-    <!--<dependency>-->
+      <!--<dependency>-->
       <!--<groupId>com.urbanairship.hbase</groupId>-->
       <!--<artifactId>hbase-tools-test-utils</artifactId>-->
       <!--<version>1.1.0</version>-->
       <!--<scope>test</scope>-->
-    <!--</dependency>-->
+      <!--</dependency>-->
 
-    <dependency>
-      <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase</artifactId>
-      <version>0.94.3</version>
-    </dependency>
+      <dependency>
+        <groupId>org.apache.hbase</groupId>
+        <artifactId>hbase</artifactId>
+        <version>0.94.3</version>
+      </dependency>
 
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-core</artifactId>
-      <version>0.20.2</version>
-    </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-core</artifactId>
+        <version>0.20.2</version>
+      </dependency>
 
-    <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-framework</artifactId>
-      <version>2.2.0-incubating</version>
-    </dependency>
+      <dependency>
+        <groupId>org.apache.curator</groupId>
+        <artifactId>curator-framework</artifactId>
+        <version>2.2.0-incubating</version>
+      </dependency>
 
-    <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-recipes</artifactId>
-      <version>2.2.0-incubating</version>
-    </dependency>
+      <dependency>
+        <groupId>org.apache.curator</groupId>
+        <artifactId>curator-recipes</artifactId>
+        <version>2.2.0-incubating</version>
+      </dependency>
 
-    <dependency>
-      <groupId>com.codahale.metrics</groupId>
-      <artifactId>metrics-core</artifactId>
-      <version>3.0.1</version>
-    </dependency>
+      <dependency>
+        <groupId>com.codahale.metrics</groupId>
+        <artifactId>metrics-core</artifactId>
+        <version>3.0.1</version>
+      </dependency>
 
-    <dependency>
-      <groupId>com.google.guava</groupId>
-      <artifactId>guava</artifactId>
-      <version>14.0.1</version>
-    </dependency>
+      <dependency>
+        <groupId>com.google.guava</groupId>
+        <artifactId>guava</artifactId>
+        <version>14.0.1</version>
+      </dependency>
 
-    <!-- Newer version of Netty? -->
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty</artifactId>
-      <version>3.3.1.Final</version>
-    </dependency>
+      <!-- Newer version of Netty? -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty</artifactId>
+        <version>3.3.1.Final</version>
+      </dependency>
 
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.11</version>
-    </dependency>
+      <dependency>
+        <groupId>junit</groupId>
+        <artifactId>junit</artifactId>
+        <version>4.11</version>
+      </dependency>
 
-  </dependencies>
+    </dependencies>
+  </dependencyManagement>
 
 </project>
