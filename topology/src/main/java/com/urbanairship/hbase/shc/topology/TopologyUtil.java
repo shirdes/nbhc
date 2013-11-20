@@ -13,6 +13,10 @@ import java.io.IOException;
 
 public class TopologyUtil {
 
+    public static final TopologyUtil INSTACE = new TopologyUtil();
+
+    private TopologyUtil() { }
+
     public TopologyResult extractLocation(Result metaResult) {
         HRegionInfo regionInfo = parseRegionInfo(metaResult);
         if (regionInfo.isSplit()) {

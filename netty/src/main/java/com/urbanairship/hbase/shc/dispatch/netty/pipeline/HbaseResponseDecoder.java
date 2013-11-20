@@ -89,7 +89,7 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
     }
 
     private String readFramedString(ChannelBuffer buffer) {
-        int length = buffer.readShort();
+        int length = buffer.readInt();
         Preconditions.checkArgument(length > 0);
 
         byte[] bytes = new byte[length];

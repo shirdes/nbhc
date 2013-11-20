@@ -10,12 +10,12 @@ import org.apache.hadoop.hbase.client.Result;
 
 public class RootTableLookupSource {
 
-    private final Supplier<HRegionLocation> masterLocationSupplier = new Supplier<HRegionLocation>() {
+    private final Supplier<HRegionLocation> rootRegionLocationSupplier = new Supplier<HRegionLocation>() {
         @Override
         public HRegionLocation get() {
-            ServerName masterServer = clusterTopology.getMasterServer();
-            return new HRegionLocation(HRegionInfo.ROOT_REGIONINFO, masterServer.getHostname(),
-                    masterServer.getPort());
+            ServerName rootRegionServer = clusterTopology.getRootRegionServer();
+            return new HRegionLocation(HRegionInfo.ROOT_REGIONINFO, rootRegionServer.getHostname(),
+                    rootRegionServer.getPort());
         }
     };
 
@@ -34,7 +34,7 @@ public class RootTableLookupSource {
     public HRegionLocation getMetaLocation(byte[] metaTableKey) {
         byte[] rootKey = HRegionInfo.createRegionName(HConstants.META_TABLE_NAME, metaTableKey, HConstants.NINES, false);
 
-        Optional<Result> metaRegionInfoRow = operationsClient.getRowOrBefore(rootKey, masterLocationSupplier);
+        Optional<Result> metaRegionInfoRow = operationsClient.getRowOrBefore(rootKey, rootRegionLocationSupplier);
         if (!metaRegionInfoRow.isPresent()) {
             throw new RuntimeException("Failed to retrieve -ROOT- table row for meta data");
         }

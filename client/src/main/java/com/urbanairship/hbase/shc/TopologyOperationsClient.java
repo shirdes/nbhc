@@ -69,7 +69,7 @@ public class TopologyOperationsClient implements TopologyOperations {
             throw new RuntimeException("Interrupted waiting for request to retrieve closest row or before for key " + new String(row, Charsets.UTF_8));
         }
         catch (Exception e) {
-            throw new RuntimeException("Failed to retrieve closest row or before for key " + new String(row, Charsets.UTF_8));
+            throw new RuntimeException("Failed to retrieve closest row or before for key " + new String(row, Charsets.UTF_8), e);
         }
 
         return (result == null || result.isEmpty())

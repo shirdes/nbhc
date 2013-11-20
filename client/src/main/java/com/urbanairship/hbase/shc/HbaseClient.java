@@ -29,6 +29,13 @@ import static com.urbanairship.hbase.shc.Protocol.*;
 
 public class HbaseClient {
 
+    public static final Function<Row, byte[]> ROW_OPERATION_ROW_EXRACTOR = new Function<Row, byte[]>() {
+        @Override
+        public byte[] apply(Row operation) {
+            return operation.getRow();
+        }
+    };
+
     private final RegionOwnershipTopology topology;
     private final RequestSender sender;
     private final RequestManager requestManager;
@@ -72,7 +79,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Boolean> checkAndPut(String table, ColumnCheck check, Put put) {
-        return sender.checkedAction(table, CHECK_AND_PUT_TARGET_METHOD, check, put, CHECK_AND_PUT_RESPONSE_PARSER, maxRetries);
+        return checkedAction(table, CHECK_AND_PUT_TARGET_METHOD, check, put, CHECK_AND_PUT_RESPONSE_PARSER, maxRetries);
     }
 
     public ListenableFuture<Void> delete(String table, Delete delete) {
@@ -84,7 +91,7 @@ public class HbaseClient {
     }
 
     public ListenableFuture<Boolean> checkAndDelete(String table, ColumnCheck check, Delete delete) {
-        return sender.checkedAction(table, CHECK_AND_DELETE_TARGET_METHOD, check, delete, CHECK_AND_DELETE_RESPONSE_PARSER, maxRetries);
+        return checkedAction(table, CHECK_AND_DELETE_TARGET_METHOD, check, delete, CHECK_AND_DELETE_RESPONSE_PARSER, maxRetries);
     }
 
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
@@ -145,7 +152,76 @@ public class HbaseClient {
             }
         };
 
-        return sender.singleActionRequest(table, column, rowExtractor, invocationBuilder, responseProcessor, maxRetries);
+        return singleActionRequest(table, column, rowExtractor, invocationBuilder, responseProcessor, maxRetries);
+    }
+
+    public <A extends Row> ListenableFuture<Boolean> checkedAction(String table,
+                                                                   final Method targetMethod,
+                                                                   final ColumnCheck check,
+                                                                   final A action,
+                                                                   Function<HbaseObjectWritable, Boolean> responseParser,
+                                                                   int maxRetries) {
+
+        final Column column = check.getColumn();
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+            @Override
+            public Invocation apply(HRegionLocation location) {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                        location.getRegionInfo().getRegionName(),
+                        column.getRow(),
+                        column.getFamily(),
+                        column.getQualifier(),
+                        (check.getValue().isPresent()) ? check.getValue().get() : null,
+                        action
+                });
+            }
+        };
+
+        return singleRowRequest(table, action, invocationBuilder, responseParser, maxRetries);
+    }
+
+    public <A extends Row, R> ListenableFuture<R> singleRowRequest(String table,
+                                                                   A action,
+                                                                   Function<HRegionLocation, Invocation> invocationBuilder,
+                                                                   Function<HbaseObjectWritable, R> responseParser,
+                                                                   int maxRetries) {
+
+        SimpleParseResponseProcessor<R> processor = new SimpleParseResponseProcessor<R>(responseParser);
+        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, processor, maxRetries);
+    }
+
+    public <P, R> ListenableFuture<R> singleActionRequest(final String table,
+                                                          final P param,
+                                                          final Function<? super P, byte[]> rowExtractor,
+                                                          Function<HRegionLocation, Invocation> invocationBuilder,
+                                                          ResponseProcessor<R> responseProcessor,
+                                                          int maxRetries) {
+
+        HRegionLocation location = topology.getRegionServer(table, rowExtractor.apply(param));
+
+        Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
+            @Override
+            public HRegionLocation get() {
+                return topology.getRegionServerNoCache(table, rowExtractor.apply(param));
+            }
+        };
+
+        Invocation invocation = invocationBuilder.apply(location);
+
+        HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
+        DefaultRequestController<R> controller = new DefaultRequestController<R>(
+                location,
+                future,
+                invocationBuilder,
+                responseProcessor,
+                updatedLocationSupplier,
+                sender,
+                maxRetries
+        );
+
+        sender.sendRequest(location, invocation, future, controller, 1);
+
+        return future;
     }
 
     private <A extends Row, R> ListenableFuture<R> simpleAction(String table,
@@ -154,7 +230,7 @@ public class HbaseClient {
                                                                 Function<HbaseObjectWritable, R> responseParser) {
 
         Function<HRegionLocation, Invocation> invocationBuilder = createLocationAndParamInvocationBuilder(targetMethod, action);
-        return sender.singleRowRequest(table, action, invocationBuilder, responseParser, maxRetries);
+        return singleRowRequest(table, action, invocationBuilder, responseParser, maxRetries);
     }
 
     private <A> Function<HRegionLocation, Invocation> createLocationAndParamInvocationBuilder(final Method targetMethod,
@@ -185,7 +261,7 @@ public class HbaseClient {
         Function<HRegionLocation, Invocation> invocationBuilder =
                 createLocationAndParamInvocationBuilder(OPEN_SCANNER_TARGET_METHOD, scan);
 
-        return sender.singleActionRequest(table, scan, rowExtractor, invocationBuilder, responseProcessor, maxRetries);
+        return singleActionRequest(table, scan, rowExtractor, invocationBuilder, responseProcessor, maxRetries);
     }
 
     private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
