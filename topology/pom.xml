@@ -5,11 +5,11 @@
 
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.urbanairship.nbhc</groupId>
+  <groupId>org.wizbang.nbhc</groupId>
   <artifactId>topology</artifactId>
 
   <parent>
-    <groupId>com.urbanairship</groupId>
+    <groupId>org.wizbang</groupId>
     <artifactId>nbhc</artifactId>
     <version>0.1-SNAPSHOT</version>
   </parent>
@@ -17,7 +17,7 @@
   <dependencies>
 
     <dependency>
-      <groupId>com.urbanairship.nbhc</groupId>
+      <groupId>org.wizbang.nbhc</groupId>
       <artifactId>common</artifactId>
     </dependency>
 

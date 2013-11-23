@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.urbanairship</groupId>
+  <groupId>org.wizbang</groupId>
   <artifactId>nbhc</artifactId>
   <packaging>pom</packaging>
   <version>0.1-SNAPSHOT</version>
@@ -26,29 +26,22 @@
     <dependencies>
 
       <dependency>
-        <groupId>com.urbanairship.nbhc</groupId>
+        <groupId>org.wizbang.nbhc</groupId>
         <artifactId>common</artifactId>
         <version>${project.version}</version>
       </dependency>
 
       <dependency>
-        <groupId>com.urbanairship.nbhc</groupId>
+        <groupId>org.wizbang.nbhc</groupId>
         <artifactId>netty</artifactId>
         <version>${project.version}</version>
       </dependency>
 
       <dependency>
-        <groupId>com.urbanairship.nbhc</groupId>
+        <groupId>org.wizbang.nbhc</groupId>
         <artifactId>topology</artifactId>
         <version>${project.version}</version>
       </dependency>
-
-      <!--<dependency>-->
-      <!--<groupId>com.urbanairship.hbase</groupId>-->
-      <!--<artifactId>hbase-tools-test-utils</artifactId>-->
-      <!--<version>1.1.0</version>-->
-      <!--<scope>test</scope>-->
-      <!--</dependency>-->
 
       <dependency>
         <groupId>org.apache.hbase</groupId>
