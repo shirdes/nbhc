@@ -2,14 +2,16 @@ package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.base.Function;
 import com.google.common.base.Supplier;
-import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.ipc.RemoteException;
+import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
+import org.wizbang.hbase.nbhc.response.RemoteError;
 
-public class DefaultRequestController<R> implements RequestController {
+public class DefaultResponseHandler<R> implements ResponseHandler {
 
     private final ResultBroker<R> resultBroker;
     private final Function<HRegionLocation, Invocation> invocationBuilder;
@@ -20,13 +22,13 @@ public class DefaultRequestController<R> implements RequestController {
 
     private HRegionLocation currentLocation;
 
-    public DefaultRequestController(HRegionLocation location,
-                                    ResultBroker<R> resultBroker,
-                                    Function<HRegionLocation, Invocation> invocationBuilder,
-                                    ResponseProcessor<R> responseProcessor,
-                                    Supplier<HRegionLocation> updatedLocationSupplier,
-                                    RequestSender sender,
-                                    int maxRetries) {
+    public DefaultResponseHandler(HRegionLocation location,
+                                  ResultBroker<R> resultBroker,
+                                  Function<HRegionLocation, Invocation> invocationBuilder,
+                                  ResponseProcessor<R> responseProcessor,
+                                  Supplier<HRegionLocation> updatedLocationSupplier,
+                                  RequestSender sender,
+                                  int maxRetries) {
         this.resultBroker = resultBroker;
         this.invocationBuilder = invocationBuilder;
         this.responseProcessor = responseProcessor;
@@ -44,25 +46,24 @@ public class DefaultRequestController<R> implements RequestController {
 
     @Override
     public void handleRemoteError(RemoteError error, int attempt) {
-        if (isRetryableError(error) && attempt <= maxRetries) {
+        if (isRegionLocationError(error) && attempt <= maxRetries) {
             currentLocation = updatedLocationSupplier.get();
             Invocation invocation = invocationBuilder.apply(currentLocation);
             sender.sendRequest(currentLocation, invocation, resultBroker, this, attempt + 1);
         }
         else {
-            // TODO; get smarter about the error handling
             resultBroker.communicateError(new RemoteException(error.getErrorClass(),
                     error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
         }
     }
 
-    private boolean isRetryableError(RemoteError error) {
-        return false;
+    private boolean isRegionLocationError(RemoteError error) {
+        return NotServingRegionException.class.getName().equals(error.getErrorClass()) ||
+                RegionServerStoppedException.class.getName().equals(error.getErrorClass());
     }
 
     @Override
     public void handleLocalError(Throwable error, int attempt) {
-        // TODO: should we retry
         resultBroker.communicateError(error);
     }
 }

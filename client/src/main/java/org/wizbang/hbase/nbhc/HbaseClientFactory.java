@@ -2,14 +2,14 @@ package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.AbstractIdleService;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.topology.HConnectionRegionOwnershipTopology;
-import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
+import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.topology.HConnectionRegionOwnershipTopology;
+import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 public final class HbaseClientFactory {
 

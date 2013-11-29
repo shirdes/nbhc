@@ -15,9 +15,9 @@ import org.apache.log4j.Logger;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
-public final class ScanStateHolder {
+public final class ScanController {
 
-    private static final Logger log = LogManager.getLogger(ScanStateHolder.class);
+    private static final Logger log = LogManager.getLogger(ScanController.class);
 
     private final String table;
     private final ScanOpener opener;
@@ -33,12 +33,12 @@ public final class ScanStateHolder {
 
     private boolean scannerOpen = false;
 
-    public ScanStateHolder(String table,
-                           Scan scan,
-                           ScanOpener opener,
-                           ScanResultsLoader resultsLoader,
-                           ScanCloser closer,
-                           ScanOperationConfig config) {
+    public ScanController(String table,
+                          Scan scan,
+                          ScanOpener opener,
+                          ScanResultsLoader resultsLoader,
+                          ScanCloser closer,
+                          ScanOperationConfig config) {
         this.table = table;
         this.opener = opener;
         this.resultsLoader = resultsLoader;

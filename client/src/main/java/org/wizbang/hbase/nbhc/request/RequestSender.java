@@ -1,14 +1,14 @@
 package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.net.HostAndPort;
+import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.Operation;
 import org.wizbang.hbase.nbhc.dispatch.RegionServerDispatcher;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.ResponseCallback;
-import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.io.HbaseObjectWritable;
-import org.apache.hadoop.hbase.ipc.Invocation;
 
 public class RequestSender {
 
@@ -20,31 +20,45 @@ public class RequestSender {
 
     public void sendRequest(HRegionLocation location,
                             Invocation invocation,
+                            final ResponseHandler responseHandler,
+                            final int attempt) {
+        dispatch(location, invocation, responseHandler, attempt);
+    }
+
+    public void sendRequest(HRegionLocation location,
+                            Invocation invocation,
                             ResultBroker<?> resultBroker,
-                            final RequestController controller,
+                            final ResponseHandler responseHandler,
                             final int attempt) {
 
+        int requestId = dispatch(location, invocation, responseHandler, attempt);
+        resultBroker.setCurrentActiveRequestId(requestId);
+    }
+
+    private int dispatch(HRegionLocation location,
+                         Invocation invocation,
+                         final ResponseHandler responseHandler,
+                         final int attempt) {
         Operation operation = new Operation(getHost(location), invocation);
 
         ResponseCallback callback = new ResponseCallback() {
             @Override
             public void receiveResponse(HbaseObjectWritable value) {
-                controller.handleResponse(value);
+                responseHandler.handleResponse(value);
             }
 
             @Override
             public void receiveRemoteError(RemoteError remoteError) {
-                controller.handleRemoteError(remoteError, attempt);
+                responseHandler.handleRemoteError(remoteError, attempt);
             }
 
             @Override
             public void receiveLocalError(Throwable error) {
-                controller.handleLocalError(error, attempt);
+                responseHandler.handleLocalError(error, attempt);
             }
         };
 
-        int requestId = dispatcher.request(operation, callback);
-        resultBroker.setCurrentActiveRequestId(requestId);
+        return dispatcher.request(operation, callback);
     }
 
     private HostAndPort getHost(HRegionLocation location) {

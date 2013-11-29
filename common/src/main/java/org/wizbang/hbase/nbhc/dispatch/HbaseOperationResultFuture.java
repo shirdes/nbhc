@@ -5,11 +5,11 @@ import com.google.common.util.concurrent.AbstractFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class HbaseOperationResultFuture<R> extends AbstractFuture<R> implements ResultBroker<R> {
 
-    private final AtomicInteger currentActiveRequestId = new AtomicInteger();
+    private final AtomicReference<Integer> currentActiveRequestId = new AtomicReference<Integer>(null);
 
     private final RequestManager requestManager;
 
@@ -38,7 +38,11 @@ public final class HbaseOperationResultFuture<R> extends AbstractFuture<R> imple
             return super.get(timeout, unit);
         }
         catch (TimeoutException e) {
-            requestManager.unregisterResponseCallback(currentActiveRequestId.get());
+            Integer requestId = currentActiveRequestId.get();
+            if (requestId != null) {
+                requestManager.unregisterResponseCallback(currentActiveRequestId.get());
+            }
+
             throw e;
         }
     }

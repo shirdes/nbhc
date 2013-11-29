@@ -8,8 +8,6 @@ import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.Response;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
-import org.apache.log4j.LogManager;
-import org.apache.log4j.Logger;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.buffer.ChannelBufferInputStream;
 import org.jboss.netty.channel.Channel;
@@ -34,11 +32,21 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
         }
 
         ChannelBuffer buffer = (ChannelBuffer) message;
-        return parseResponse(buffer);
+        int requestId = buffer.readInt();
+
+        Response response;
+        try {
+            response = parseResponseDetail(buffer, requestId);
+        }
+        catch (Exception e) {
+            response = Response.newLocalError(requestId,
+                    new RuntimeException("Error parsing response detail for request id " + requestId));
+        }
+
+        return response;
     }
 
-    private Response parseResponse(ChannelBuffer buffer) {
-        int requestId = buffer.readInt();
+    private Response parseResponseDetail(ChannelBuffer buffer, int requestId) throws IOException {
         byte flags = buffer.readByte();
 
         boolean isErrorResponse = hasErrorFlag(flags);
@@ -53,14 +61,7 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
             return Response.newRemoteError(requestId, readError(buffer));
         }
 
-        HbaseObjectWritable value;
-        try {
-            value = readResponseValue(buffer);
-        }
-        catch (Exception e) {
-            return Response.newLocalError(requestId,
-                    new RuntimeException("Error parsing HbaseObjectWritable from binary response" + requestId, e));
-        }
+        HbaseObjectWritable value = readResponseValue(buffer);
 
         return Response.newResponse(requestId, value);
     }

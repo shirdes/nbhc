@@ -1,11 +1,11 @@
 package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Charsets;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
-import org.wizbang.hbase.nbhc.scan.ScannerResultStream;
 import org.apache.commons.lang.math.RandomUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
@@ -14,6 +14,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.wizbang.hbase.nbhc.scan.ScannerResultStream;
 
 import java.util.List;
 import java.util.Map;
@@ -91,7 +92,7 @@ public class ClientTest {
             entries.put(UUID.randomUUID().toString(), randomAlphanumeric(5));
         }
 
-        List<Put> puts = Lists.newArrayList();
+        ImmutableList.Builder<Put> puts = ImmutableList.builder();
         for (Map.Entry<String, String> entry : entries.entrySet()) {
             Put put = new Put(Bytes.toBytes(entry.getKey()), System.currentTimeMillis());
             put.add(FAMILY, COL, Bytes.toBytes(entry.getValue()));
@@ -99,15 +100,17 @@ public class ClientTest {
             puts.add(put);
         }
 
-        ListenableFuture<Void> future = client.multiPut(TABLE, puts);
+        ListenableFuture<Void> future = client.multiPut(TABLE, puts.build());
         future.get();
 
-        List<Get> gets = Lists.newArrayList();
+        ImmutableList.Builder<Get> builder = ImmutableList.builder();
         for (String key : entries.keySet()) {
-            gets.add(new Get(Bytes.toBytes(key)));
+            builder.add(new Get(Bytes.toBytes(key)));
         }
 
-        ListenableFuture<List<Result>> getFuture = client.multiGet(TABLE, gets);
+        ImmutableList<Get> gets = builder.build();
+
+        ListenableFuture<ImmutableList<Result>> getFuture = client.multiGet(TABLE, gets);
         List<Result> results = getFuture.get();
 
         assertEquals(entries.size(), results.size());
@@ -140,7 +143,7 @@ public class ClientTest {
         }
 
         List<String> rows = Lists.newArrayList(entries.keySet());
-        List<Delete> deletes = Lists.newArrayList();
+        ImmutableList.Builder<Delete> deletes = ImmutableList.builder();
 
         Set<String> removed = Sets.newHashSet();
         for (int i = 0; i < 3; i++) {
@@ -151,7 +154,7 @@ public class ClientTest {
             removed.add(row);
         }
 
-        ListenableFuture<Void> deleteFuture = client.multiDelete(TABLE, deletes);
+        ListenableFuture<Void> deleteFuture = client.multiDelete(TABLE, deletes.build());
         deleteFuture.get();
 
         getFuture = client.multiGet(TABLE, gets);

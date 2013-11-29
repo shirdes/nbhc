@@ -1,18 +1,18 @@
 package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.collect.ImmutableList;
-import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.response.RemoteError;
-import org.wizbang.hbase.nbhc.scan.ScannerBatchResult;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.ipc.RemoteException;
+import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
+import org.wizbang.hbase.nbhc.response.RemoteError;
+import org.wizbang.hbase.nbhc.scan.ScannerBatchResult;
 
-public final class ScannerNextBatchRequestController implements RequestController {
+public final class ScannerNextBatchResponseHandler implements ResponseHandler {
 
     private final ResultBroker<ScannerBatchResult> resultBroker;
 
-    public ScannerNextBatchRequestController(ResultBroker<ScannerBatchResult> resultBroker) {
+    public ScannerNextBatchResponseHandler(ResultBroker<ScannerBatchResult> resultBroker) {
         this.resultBroker = resultBroker;
     }
 
@@ -47,7 +47,6 @@ public final class ScannerNextBatchRequestController implements RequestControlle
 
     @Override
     public void handleLocalError(Throwable error, int attempt) {
-        // TODO: what do we do??  Should we retry?  Probably...
         resultBroker.communicateError(error);
     }
 }

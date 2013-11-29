@@ -4,26 +4,38 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.request.*;
-import org.wizbang.hbase.nbhc.scan.*;
+import org.wizbang.hbase.nbhc.multi.MultiActionController;
+import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
+import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.ResponseProcessor;
+import org.wizbang.hbase.nbhc.request.ScannerNextBatchResponseHandler;
+import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
+import org.wizbang.hbase.nbhc.scan.ScanCloser;
+import org.wizbang.hbase.nbhc.scan.ScanController;
+import org.wizbang.hbase.nbhc.scan.ScanOpener;
+import org.wizbang.hbase.nbhc.scan.ScanOperationConfig;
+import org.wizbang.hbase.nbhc.scan.ScanResultsLoader;
+import org.wizbang.hbase.nbhc.scan.ScannerBatchResult;
+import org.wizbang.hbase.nbhc.scan.ScannerOpenResult;
+import org.wizbang.hbase.nbhc.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
-import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.client.*;
-import org.apache.hadoop.hbase.io.HbaseObjectWritable;
-import org.apache.hadoop.hbase.ipc.Invocation;
 
 import java.lang.reflect.Method;
-import java.util.List;
-import java.util.Map;
-import java.util.SortedMap;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
@@ -55,26 +67,15 @@ public class HbaseClient {
         return simpleAction(table, GET_TARGET_METHOD, get, GET_RESPONSE_PARSER);
     }
 
-    public ListenableFuture<List<Result>> multiGet(String table, final List<Get> gets) {
-        ListenableFuture<List<ImmutableMap<Integer, Result>>> all = multiActionRequest(table, gets);
-        return Futures.transform(all, new Function<List<ImmutableMap<Integer, Result>>, List<Result>>() {
-            @Override
-            public List<Result> apply(List<ImmutableMap<Integer, Result>> collected) {
-                SortedMap<Integer, Result> merged = Maps.newTreeMap();
-                for (ImmutableMap<Integer, Result> batch : collected) {
-                    merged.putAll(batch);
-                }
-
-                return Lists.newArrayList(merged.values());
-            }
-        });
+    public ListenableFuture<ImmutableList<Result>> multiGet(String table, final ImmutableList<Get> gets) {
+        return multiActionRequest(table, gets);
     }
 
     public ListenableFuture<Void> put(String table, Put put) {
         return simpleAction(table, PUT_TARGET_METHOD, put, PUT_RESPONSE_PARSER);
     }
 
-    public ListenableFuture<Void> multiPut(String table, List<Put> puts) {
+    public ListenableFuture<Void> multiPut(String table, ImmutableList<Put> puts) {
         return multiMutationRequest(table, puts);
     }
 
@@ -86,7 +87,7 @@ public class HbaseClient {
         return simpleAction(table, DELETE_TARGET_METHOD, delete, DELETE_RESPONSE_PARSER);
     }
 
-    public ListenableFuture<Void> multiDelete(String table, List<Delete> deletes) {
+    public ListenableFuture<Void> multiDelete(String table, ImmutableList<Delete> deletes) {
         return multiMutationRequest(table, deletes);
     }
 
@@ -101,7 +102,7 @@ public class HbaseClient {
         ScanOperationConfig config = ScanOperationConfig.newBuilder()
                 .build();
 
-        ScanStateHolder stateHolder = new ScanStateHolder(
+        ScanController stateHolder = new ScanController(
                 table, scan,
                 new ScanOpener() {
                     @Override
@@ -209,7 +210,7 @@ public class HbaseClient {
         Invocation invocation = invocationBuilder.apply(location);
 
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
-        DefaultRequestController<R> controller = new DefaultRequestController<R>(
+        DefaultResponseHandler<R> responseHandler = new DefaultResponseHandler<R>(
                 location,
                 future,
                 invocationBuilder,
@@ -219,7 +220,7 @@ public class HbaseClient {
                 maxRetries
         );
 
-        sender.sendRequest(location, invocation, future, controller, 1);
+        sender.sendRequest(location, invocation, future, responseHandler, 1);
 
         return future;
     }
@@ -278,7 +279,7 @@ public class HbaseClient {
         SimpleParseResponseProcessor<Void> responseProcessor = new SimpleParseResponseProcessor<Void>(CLOSE_SCANNER_RESPONSE_PARSER);
 
         HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
-        DefaultRequestController<Void> controller = new DefaultRequestController<Void>(
+        DefaultResponseHandler<Void> responseHandler = new DefaultResponseHandler<Void>(
                 location,
                 future,
                 invocationBuilder,
@@ -288,7 +289,7 @@ public class HbaseClient {
                 maxRetries
         );
 
-        sender.sendRequest(location, invocation, future, controller, 1);
+        sender.sendRequest(location, invocation, future, responseHandler, 1);
 
         return future;
     }
@@ -305,69 +306,31 @@ public class HbaseClient {
 
         HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
 
-        ScannerNextBatchRequestController controller = new ScannerNextBatchRequestController(future);
+        ScannerNextBatchResponseHandler responseHandler = new ScannerNextBatchResponseHandler(future);
 
         // TODO: what happens if the server says this region is not online or something and we should go back and find
         // TODO: the updated region to issue the request to?  Somehow that will need to bubble all the way out to the
         // TODO: state holder but don't want to tie this directly into that either :(
-        sender.sendRequest(location, invocation, future, controller, 1);
+        sender.sendRequest(location, invocation, future, responseHandler, 1);
 
         return future;
     }
 
-    private <A extends Row> ListenableFuture<List<ImmutableMap<Integer, Result>>> multiActionRequest(String table,
-                                                                                                     final List<A> actions) {
+    private <A extends Row> ListenableFuture<ImmutableList<Result>> multiActionRequest(String table,
+                                                                                       ImmutableList<A> actions) {
 
-        Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(table, actions);
+        HbaseOperationResultFuture<ImmutableList<Result>> future =
+                new HbaseOperationResultFuture<ImmutableList<Result>>(requestManager);
 
-        Function<Integer, A> indexLookup = new Function<Integer, A>() {
-            @Override
-            public A apply(Integer index) {
-                return actions.get(index);
-            }
-        };
+        MultiActionController<A> controller = new MultiActionController<A>(table, actions, future, topology, sender);
+        controller.initiate();
 
-        List<ListenableFuture<ImmutableMap<Integer, Result>>> futures = Lists.newArrayList();
-        for (HRegionLocation location : locationActions.keySet()) {
-            MultiAction<A> multiAction = locationActions.get(location);
-
-            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
-
-            HbaseOperationResultFuture<ImmutableMap<Integer, Result>> future =
-                    new HbaseOperationResultFuture<ImmutableMap<Integer, Result>>(requestManager);
-
-            MultiActionRequestController<A> controller = new MultiActionRequestController<A>(indexLookup, future);
-
-            sender.sendRequest(location, invocation, future, controller, 1);
-
-            futures.add(future);
-        }
-
-        return Futures.allAsList(futures);
+        return future;
     }
 
-    private <M extends Row> ListenableFuture<Void> multiMutationRequest(String table, List<M> mutations) {
-        ListenableFuture<List<ImmutableMap<Integer, Result>>> futures = multiActionRequest(table, mutations);
-        return Futures.transform(futures, Functions.<Void>constant(null));
-    }
-
-    private <O extends Row> Map<HRegionLocation, MultiAction<O>> groupByLocation(String table,
-                                                                                 List<O> operations) {
-        Map<HRegionLocation, MultiAction<O>> regionActions = Maps.newHashMap();
-        for (int i = 0; i < operations.size(); i++) {
-            O operation = operations.get(i);
-
-            HRegionLocation location = topology.getRegionServer(table, operation.getRow());
-            MultiAction<O> regionAction = regionActions.get(location);
-            if (regionAction == null) {
-                regionAction = new MultiAction<O>();
-                regionActions.put(location, regionAction);
-            }
-
-            regionAction.add(location.getRegionInfo().getRegionName(), new Action<O>(operation, i));
-        }
-
-        return regionActions;
+    private <M extends Row> ListenableFuture<Void> multiMutationRequest(String table, ImmutableList<M> mutations) {
+        ListenableFuture<ImmutableList<Result>> results = multiActionRequest(table, mutations);
+        return Futures.transform(results, Functions.<Void>constant(null));
     }
 
 }

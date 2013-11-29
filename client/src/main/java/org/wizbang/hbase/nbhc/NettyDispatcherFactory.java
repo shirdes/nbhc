@@ -4,17 +4,22 @@ import com.codahale.metrics.Gauge;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import org.jboss.netty.bootstrap.ClientBootstrap;
+import org.jboss.netty.channel.Channel;
+import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 import org.wizbang.hbase.nbhc.dispatch.RegionServerDispatcher;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.netty.DisconnectCallback;
 import org.wizbang.hbase.nbhc.netty.HostChannelProvider;
 import org.wizbang.hbase.nbhc.netty.NettyRegionServerDispatcher;
 import org.wizbang.hbase.nbhc.netty.pipeline.HbaseClientPipelineFactory;
-import org.jboss.netty.bootstrap.ClientBootstrap;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class NettyDispatcherFactory {
 

@@ -4,16 +4,16 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
-import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
-import org.wizbang.hbase.nbhc.request.DefaultRequestController;
-import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
-import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
-import org.wizbang.hbase.nbhc.topology.TopologyOperations;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
+import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
+import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
+import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
+import org.wizbang.hbase.nbhc.topology.TopologyOperations;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
@@ -47,7 +47,7 @@ public class TopologyOperationsClient implements TopologyOperations {
 
         HbaseOperationResultFuture<Result> future = futureSupplier.create();
         SimpleParseResponseProcessor<Result> processor = new SimpleParseResponseProcessor<Result>(GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER);
-        DefaultRequestController<Result> controller = new DefaultRequestController<Result>(
+        DefaultResponseHandler<Result> responseHandler = new DefaultResponseHandler<Result>(
                 location,
                 future,
                 invocationBuilder,
@@ -57,7 +57,7 @@ public class TopologyOperationsClient implements TopologyOperations {
                 maxRetries
         );
 
-        sender.sendRequest(location, invocation, future, controller, 1);
+        sender.sendRequest(location, invocation, future, responseHandler, 1);
 
         // TODO: need a timeout
         Result result;

@@ -1,9 +1,9 @@
 package org.wizbang.hbase.nbhc.request;
 
-import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.wizbang.hbase.nbhc.response.RemoteError;
 
-public interface RequestController {
+public interface ResponseHandler {
 
     void handleResponse(HbaseObjectWritable received);
 
