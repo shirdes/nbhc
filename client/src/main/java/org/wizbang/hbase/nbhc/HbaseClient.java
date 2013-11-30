@@ -19,20 +19,20 @@ import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.multi.MultiActionController;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionController;
 import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.ResponseProcessor;
-import org.wizbang.hbase.nbhc.request.ScannerNextBatchResponseHandler;
+import org.wizbang.hbase.nbhc.request.scan.ScannerNextBatchResponseHandler;
 import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
-import org.wizbang.hbase.nbhc.scan.ScanCloser;
-import org.wizbang.hbase.nbhc.scan.ScanController;
-import org.wizbang.hbase.nbhc.scan.ScanOpener;
-import org.wizbang.hbase.nbhc.scan.ScanOperationConfig;
-import org.wizbang.hbase.nbhc.scan.ScanResultsLoader;
-import org.wizbang.hbase.nbhc.scan.ScannerBatchResult;
-import org.wizbang.hbase.nbhc.scan.ScannerOpenResult;
-import org.wizbang.hbase.nbhc.scan.ScannerResultStream;
+import org.wizbang.hbase.nbhc.request.scan.ScanCloser;
+import org.wizbang.hbase.nbhc.request.scan.ScanController;
+import org.wizbang.hbase.nbhc.request.scan.ScanOpener;
+import org.wizbang.hbase.nbhc.request.scan.ScanOperationConfig;
+import org.wizbang.hbase.nbhc.request.scan.ScanResultsLoader;
+import org.wizbang.hbase.nbhc.request.scan.ScannerBatchResult;
+import org.wizbang.hbase.nbhc.request.scan.ScannerOpenResult;
+import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.lang.reflect.Method;
@@ -102,7 +102,7 @@ public class HbaseClient {
         ScanOperationConfig config = ScanOperationConfig.newBuilder()
                 .build();
 
-        ScanController stateHolder = new ScanController(
+        ScanController controller = new ScanController(
                 table, scan,
                 new ScanOpener() {
                     @Override
@@ -125,7 +125,7 @@ public class HbaseClient {
                 config
         );
 
-        return new ScannerResultStream(stateHolder);
+        return new ScannerResultStream(controller);
     }
 
     public ListenableFuture<Long> incrementColumnValue(String table, final Column column, final long amount) {

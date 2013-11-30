@@ -1,12 +1,12 @@
-package org.wizbang.hbase.nbhc.request;
+package org.wizbang.hbase.nbhc.request.scan;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.ipc.RemoteException;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
+import org.wizbang.hbase.nbhc.request.ResponseHandler;
 import org.wizbang.hbase.nbhc.response.RemoteError;
-import org.wizbang.hbase.nbhc.scan.ScannerBatchResult;
 
 public final class ScannerNextBatchResponseHandler implements ResponseHandler {
 

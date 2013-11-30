@@ -1,5 +1,6 @@
-package org.wizbang.hbase.nbhc.multi;
+package org.wizbang.hbase.nbhc.request.multi;
 
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -23,6 +24,20 @@ import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
 import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
 
 public class MultiActionController<A extends Row> {
+
+    private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
+        @Override
+        public HRegionLocation apply(byte[] row) {
+            return topology.getRegionServer(table, row);
+        }
+    };
+
+    private final Function<byte[], HRegionLocation> forceUncachedLocationLookup = new Function<byte[], HRegionLocation>() {
+        @Override
+        public HRegionLocation apply(byte[] row) {
+            return topology.getRegionServerNoCache(table, row);
+        }
+    };
 
     private final String table;
     private final ImmutableList<A> actions;
@@ -48,10 +63,10 @@ public class MultiActionController<A extends Row> {
     }
 
     public void initiate() {
-        sendActionRequests(actions);
+        sendActionRequests(actions, allowCachedLocationLookup);
     }
 
-    public void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
+    void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
                                       ImmutableSet<Integer> retryActionIndexes) {
 
         synchronized (resultGatheringLock) {
@@ -59,7 +74,12 @@ public class MultiActionController<A extends Row> {
         }
 
         if (!retryActionIndexes.isEmpty()) {
-            // TODO: submit new request(s) for the actions needed retry
+            ImmutableList.Builder<A> retryActions = ImmutableList.builder();
+            for (Integer index : retryActionIndexes) {
+                retryActions.add(actions.get(index));
+            }
+
+            sendActionRequests(retryActions.build(), forceUncachedLocationLookup);
             return;
         }
 
@@ -76,12 +96,12 @@ public class MultiActionController<A extends Row> {
         }
     }
 
-    public void processUnrecoverableError(Throwable error) {
+    void processUnrecoverableError(Throwable error) {
         resultBroker.communicateError(error);
     }
 
-    private void sendActionRequests(ImmutableList<A> sendActions) {
-        Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(sendActions);
+    private void sendActionRequests(ImmutableList<A> sendActions, Function<byte[], HRegionLocation> locationLookup) {
+        Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(sendActions, locationLookup);
         for (HRegionLocation location : locationActions.keySet()) {
             MultiAction<A> multiAction = locationActions.get(location);
 
@@ -93,12 +113,13 @@ public class MultiActionController<A extends Row> {
         }
     }
 
-    private Map<HRegionLocation, MultiAction<A>> groupByLocation(ImmutableList<A> actions) {
+    private Map<HRegionLocation, MultiAction<A>> groupByLocation(ImmutableList<A> actions,
+                                                                 Function<byte[], HRegionLocation> locationLookup) {
         Map<HRegionLocation, MultiAction<A>> regionActions = Maps.newHashMap();
         for (int i = 0; i < actions.size(); i++) {
             A operation = actions.get(i);
 
-            HRegionLocation location = topology.getRegionServer(table, operation.getRow());
+            HRegionLocation location = locationLookup.apply(operation.getRow());
             MultiAction<A> regionAction = regionActions.get(location);
             if (regionAction == null) {
                 regionAction = new MultiAction<A>();

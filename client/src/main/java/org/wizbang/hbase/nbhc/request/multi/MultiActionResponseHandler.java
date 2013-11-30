@@ -1,4 +1,4 @@
-package org.wizbang.hbase.nbhc.multi;
+package org.wizbang.hbase.nbhc.request.multi;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;

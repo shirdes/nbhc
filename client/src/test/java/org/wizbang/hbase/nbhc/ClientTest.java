@@ -14,7 +14,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.wizbang.hbase.nbhc.scan.ScannerResultStream;
+import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 
 import java.util.List;
 import java.util.Map;

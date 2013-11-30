@@ -1,4 +1,4 @@
-package org.wizbang.hbase.nbhc.scan;
+package org.wizbang.hbase.nbhc.request.scan;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;

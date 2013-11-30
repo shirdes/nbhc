@@ -1,4 +1,4 @@
-package org.wizbang.hbase.nbhc.scan;
+package org.wizbang.hbase.nbhc.request.scan;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
