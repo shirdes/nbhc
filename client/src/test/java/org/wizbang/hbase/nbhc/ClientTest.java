@@ -2,6 +2,7 @@ package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -16,6 +17,9 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -94,7 +98,8 @@ public class ClientTest {
 
         ImmutableList.Builder<Put> puts = ImmutableList.builder();
         for (Map.Entry<String, String> entry : entries.entrySet()) {
-            Put put = new Put(Bytes.toBytes(entry.getKey()), System.currentTimeMillis());
+            byte[] key = distributedKey(entry.getKey());
+            Put put = new Put(key, System.currentTimeMillis());
             put.add(FAMILY, COL, Bytes.toBytes(entry.getValue()));
 
             puts.add(put);
@@ -105,7 +110,7 @@ public class ClientTest {
 
         ImmutableList.Builder<Get> builder = ImmutableList.builder();
         for (String key : entries.keySet()) {
-            builder.add(new Get(Bytes.toBytes(key)));
+            builder.add(new Get(distributedKey(key)));
         }
 
         ImmutableList<Get> gets = builder.build();
@@ -119,10 +124,11 @@ public class ClientTest {
 
             assertArrayEquals(gets.get(i).getRow(), result.getRow());
 
-            String key = Bytes.toString(result.getRow());
+            String key = parseKey(result.getRow());
             assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
         }
 
+        Set<String> found = new HashSet<String>();
         Scan scan = new Scan();
         scan.addFamily(FAMILY);
         scan.setCaching(10);
@@ -131,16 +137,20 @@ public class ClientTest {
             while (stream.hasNext()) {
                 Result result = stream.next();
 
-                String key = Bytes.toString(result.getRow());
+                String key = parseKey(result.getRow());
                 if (!entries.containsKey(key)) continue;
 
                 assertEquals(1, result.getFamilyMap(FAMILY).size());
                 assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
+
+                found.add(key);
             }
         }
         finally {
             stream.close();
         }
+
+        assertEquals(ImmutableSet.copyOf(entries.keySet()), ImmutableSet.copyOf(found));
 
         List<String> rows = Lists.newArrayList(entries.keySet());
         ImmutableList.Builder<Delete> deletes = ImmutableList.builder();
@@ -149,7 +159,8 @@ public class ClientTest {
         for (int i = 0; i < 3; i++) {
             int idx = RandomUtils.nextInt(rows.size());
             String row = rows.get(idx);
-            deletes.add(new Delete(Bytes.toBytes(row), System.currentTimeMillis() + 1L, null));
+            byte[] key = distributedKey(row);
+            deletes.add(new Delete(key, System.currentTimeMillis() + 1L, null));
 
             removed.add(row);
         }
@@ -167,10 +178,10 @@ public class ClientTest {
             String key;
             if (result.isEmpty()) {
                 Get correspondingGet = gets.get(i);
-                key = Bytes.toString(correspondingGet.getRow());
+                key = parseKey(correspondingGet.getRow());
             }
             else {
-                key = Bytes.toString(result.getRow());
+                key = parseKey(result.getRow());
             }
 
             if (removed.contains(key)) {
@@ -180,6 +191,24 @@ public class ClientTest {
                 assertEquals(entries.get(key), Bytes.toString(result.getValue(FAMILY, COL)));
             }
         }
+    }
+
+    private String parseKey(byte[] row) {
+        return new String(Arrays.copyOfRange(row, 2, row.length), Charsets.UTF_8);
+    }
+
+    private byte[] distributedKey(String base) {
+        byte[] baseBytes = base.getBytes(Charsets.UTF_8);
+
+        byte partition = (byte) Character.digit(base.charAt(0), 16);
+
+        byte[] key = new byte[2 + baseBytes.length];
+        ByteBuffer.wrap(key)
+                .put(partition)
+                .put((byte) ':')
+                .put(baseBytes);
+
+        return key;
     }
 
     @Test

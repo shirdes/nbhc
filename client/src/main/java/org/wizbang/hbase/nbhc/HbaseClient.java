@@ -322,8 +322,7 @@ public class HbaseClient {
         HbaseOperationResultFuture<ImmutableList<Result>> future =
                 new HbaseOperationResultFuture<ImmutableList<Result>>(requestManager);
 
-        MultiActionController<A> controller = new MultiActionController<A>(table, actions, future, topology, sender);
-        controller.initiate();
+        MultiActionController.initiate(table, actions, future, topology, sender);
 
         return future;
     }

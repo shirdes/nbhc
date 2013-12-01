@@ -18,27 +18,11 @@ public class RequestSender {
         this.dispatcher = dispatcher;
     }
 
-    public void sendRequest(HRegionLocation location,
+    public int sendRequest(HRegionLocation location,
                             Invocation invocation,
                             final ResponseHandler responseHandler,
                             final int attempt) {
-        dispatch(location, invocation, responseHandler, attempt);
-    }
 
-    public void sendRequest(HRegionLocation location,
-                            Invocation invocation,
-                            ResultBroker<?> resultBroker,
-                            final ResponseHandler responseHandler,
-                            final int attempt) {
-
-        int requestId = dispatch(location, invocation, responseHandler, attempt);
-        resultBroker.setCurrentActiveRequestId(requestId);
-    }
-
-    private int dispatch(HRegionLocation location,
-                         Invocation invocation,
-                         final ResponseHandler responseHandler,
-                         final int attempt) {
         Operation operation = new Operation(getHost(location), invocation);
 
         ResponseCallback callback = new ResponseCallback() {
@@ -59,6 +43,16 @@ public class RequestSender {
         };
 
         return dispatcher.request(operation, callback);
+    }
+
+    public void sendRequest(HRegionLocation location,
+                            Invocation invocation,
+                            ResultBroker<?> resultBroker,
+                            final ResponseHandler responseHandler,
+                            final int attempt) {
+
+        int requestId = sendRequest(location, invocation, responseHandler, attempt);
+        resultBroker.setCurrentActiveRequestId(requestId);
     }
 
     private HostAndPort getHost(HRegionLocation location) {

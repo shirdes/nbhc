@@ -23,6 +23,9 @@ import java.util.TreeMap;
 import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
 import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
 
+// TODO: need to consider if we should have this class control the future that is returned for the multi action and then
+// TODO: put in place a callback on that future to handle the case where the caller determines that the requests is
+// TODO: timed out so that we can clear any outstanding callbacks??
 public class MultiActionController<A extends Row> {
 
     private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
@@ -50,7 +53,17 @@ public class MultiActionController<A extends Row> {
     private final SortedMap<Integer, Result> gatheredResults = new TreeMap<Integer, Result>();
     private boolean gatheringComplete = false;
 
-    public MultiActionController(String table,
+    public static <A extends Row> void initiate(String table,
+                                                ImmutableList<A> actions,
+                                                ResultBroker<ImmutableList<Result>> resultBroker,
+                                                RegionOwnershipTopology topology,
+                                                RequestSender sender) {
+
+        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology, sender);
+        controller.begin();
+    }
+
+    private MultiActionController(String table,
                                  ImmutableList<A> actions,
                                  ResultBroker<ImmutableList<Result>> resultBroker,
                                  RegionOwnershipTopology topology,
@@ -62,7 +75,7 @@ public class MultiActionController<A extends Row> {
         this.sender = sender;
     }
 
-    public void initiate() {
+    private void begin() {
         sendActionRequests(actions, allowCachedLocationLookup);
     }
 
