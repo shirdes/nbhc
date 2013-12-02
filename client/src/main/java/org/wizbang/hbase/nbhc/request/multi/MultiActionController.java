@@ -64,10 +64,10 @@ public class MultiActionController<A extends Row> {
     }
 
     private MultiActionController(String table,
-                                 ImmutableList<A> actions,
-                                 ResultBroker<ImmutableList<Result>> resultBroker,
-                                 RegionOwnershipTopology topology,
-                                 RequestSender sender) {
+                                  ImmutableList<A> actions,
+                                  ResultBroker<ImmutableList<Result>> resultBroker,
+                                  RegionOwnershipTopology topology,
+                                  RequestSender sender) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
@@ -80,7 +80,7 @@ public class MultiActionController<A extends Row> {
     }
 
     void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
-                                      ImmutableSet<Integer> retryActionIndexes) {
+                               ImmutableSet<Integer> retryActionIndexes) {
 
         synchronized (resultGatheringLock) {
             gatheredResults.putAll(successfulResults);

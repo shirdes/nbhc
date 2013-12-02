@@ -3,9 +3,6 @@ package org.wizbang.hbase.nbhc;
 import com.google.common.base.Charsets;
 import com.google.common.base.Supplier;
 import com.google.common.collect.Maps;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
-import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryNTimes;
@@ -22,7 +19,16 @@ import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.wizbang.hbase.nbhc.topology.*;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
+import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
+import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.topology.LocationCache;
+import org.wizbang.hbase.nbhc.topology.MetaTable;
+import org.wizbang.hbase.nbhc.topology.MetaTableLookupSource;
+import org.wizbang.hbase.nbhc.topology.RootTable;
+import org.wizbang.hbase.nbhc.topology.RootTableLookupSource;
+import org.wizbang.hbase.nbhc.topology.TopologyUtil;
+import org.wizbang.hbase.nbhc.topology.ZookeeperHbaseClusterTopology;
 
 import java.nio.ByteBuffer;
 import java.util.Map;
@@ -61,7 +67,7 @@ public class TopologyTest {
         dispatcherService = NettyDispatcherFactory.create(requestManager);
         dispatcherService.startAndWait();
 
-        RequestSender sender = new RequestSender(dispatcherService.getDispatcher());
+        RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
         OperationFutureSupplier futureSupplier = new OperationFutureSupplier(requestManager);
 

@@ -1,16 +1,15 @@
 package org.wizbang.hbase.nbhc.dispatch;
 
-import org.wizbang.hbase.nbhc.Operation;
 import org.apache.hadoop.hbase.ipc.Invocation;
 
 public final class Request {
 
     private final int requestId;
-    private final Operation operation;
+    private final Invocation invocation;
 
-    public Request(int requestId, Operation operation) {
+    public Request(int requestId, Invocation invocation) {
         this.requestId = requestId;
-        this.operation = operation;
+        this.invocation = invocation;
     }
 
     public int getRequestId() {
@@ -18,7 +17,7 @@ public final class Request {
     }
 
     public Invocation getInvocation() {
-        return operation.getInvocation();
+        return invocation;
     }
 
     // TODO: toString()

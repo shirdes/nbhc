@@ -49,7 +49,7 @@ public class DefaultResponseHandler<R> implements ResponseHandler {
         if (isRegionLocationError(error) && attempt <= maxRetries) {
             currentLocation = updatedLocationSupplier.get();
             Invocation invocation = invocationBuilder.apply(currentLocation);
-            sender.sendRequest(currentLocation, invocation, resultBroker, this, attempt + 1);
+            sender.sendRequestForBroker(currentLocation, invocation, resultBroker, this, attempt + 1);
         }
         else {
             resultBroker.communicateError(new RemoteException(error.getErrorClass(),

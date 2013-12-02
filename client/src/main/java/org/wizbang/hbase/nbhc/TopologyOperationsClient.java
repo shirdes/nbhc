@@ -57,7 +57,7 @@ public class TopologyOperationsClient implements TopologyOperations {
                 maxRetries
         );
 
-        sender.sendRequest(location, invocation, future, responseHandler, 1);
+        sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);
 
         // TODO: need a timeout
         Result result;

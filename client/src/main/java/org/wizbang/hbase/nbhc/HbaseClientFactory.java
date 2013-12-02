@@ -52,7 +52,7 @@ public final class HbaseClientFactory {
 
             RegionOwnershipTopology topology = new HConnectionRegionOwnershipTopology(hconn);
 
-            RequestSender sender = new RequestSender(dispatcherService.getDispatcher());
+            RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
             client = new HbaseClient(topology, sender, requestManager, 1);
         }

@@ -101,7 +101,7 @@ public class NettyDispatcherFactory {
 
             clientBootstrap.setPipelineFactory(new HbaseClientPipelineFactory(requestManager, disconnectCallback, channelProvider));
 
-            dispatcher = new NettyRegionServerDispatcher(requestManager, channelProvider);
+            dispatcher = new NettyRegionServerDispatcher(channelProvider);
         }
 
         @Override

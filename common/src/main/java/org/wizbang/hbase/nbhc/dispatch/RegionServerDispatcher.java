@@ -1,10 +1,9 @@
 package org.wizbang.hbase.nbhc.dispatch;
 
-import org.wizbang.hbase.nbhc.Operation;
-import org.wizbang.hbase.nbhc.response.ResponseCallback;
+import com.google.common.net.HostAndPort;
 
 public interface RegionServerDispatcher {
 
-    int request(Operation operation, ResponseCallback callback);
+    void request(HostAndPort host, Request request);
 
 }
