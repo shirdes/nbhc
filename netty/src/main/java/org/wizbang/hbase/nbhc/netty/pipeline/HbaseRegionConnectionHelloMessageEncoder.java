@@ -25,7 +25,7 @@ public final class HbaseRegionConnectionHelloMessageEncoder extends OneToOneEnco
         int bufferLength = hello.getMagic().length +
                            1 +
                            Ints.BYTES +
-                           1 + hello.getProtocol().length;
+                           hello.getProtocol().length;
 
         ChannelBuffer buffer = ChannelBuffers.buffer(bufferLength);
         buffer.writeBytes(hello.getMagic());
