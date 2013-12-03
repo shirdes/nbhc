@@ -1,4 +1,4 @@
-package org.wizbang.hbase.nbhc;
+package org.wizbang.hbase.nbhc.topology;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Function;
@@ -13,7 +13,6 @@ import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
 import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
-import org.wizbang.hbase.nbhc.topology.TopologyOperations;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 

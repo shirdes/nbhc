@@ -1,11 +1,7 @@
 package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Charsets;
-import com.google.common.base.Supplier;
 import com.google.common.collect.Maps;
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.curator.framework.CuratorFrameworkFactory;
-import org.apache.curator.retry.RetryNTimes;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
@@ -20,15 +16,10 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
+import org.wizbang.hbase.nbhc.netty.NettyDispatcherFactory;
 import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.topology.LocationCache;
-import org.wizbang.hbase.nbhc.topology.MetaTable;
-import org.wizbang.hbase.nbhc.topology.MetaTableLookupSource;
-import org.wizbang.hbase.nbhc.topology.RootTable;
-import org.wizbang.hbase.nbhc.topology.RootTableLookupSource;
-import org.wizbang.hbase.nbhc.topology.TopologyUtil;
-import org.wizbang.hbase.nbhc.topology.ZookeeperHbaseClusterTopology;
+import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
+import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 
 import java.nio.ByteBuffer;
 import java.util.Map;
@@ -41,13 +32,11 @@ public class TopologyTest {
     private static final String TABLE = "TOPOLOGY.TEST";
 
     private static RegionServerDispatcherService dispatcherService;
-    private static CuratorFramework curator;
-    private static ZookeeperHbaseClusterTopology clusterTopology;
-
-    private static MetaTable metaTable;
     private static HConnection hconn;
 
     private static Configuration config;
+
+    private static HbaseMetaService metaService;
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -69,35 +58,14 @@ public class TopologyTest {
 
         RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
-        OperationFutureSupplier futureSupplier = new OperationFutureSupplier(requestManager);
-
-        TopologyOperationsClient operationsClient = new TopologyOperationsClient(sender, futureSupplier, 3);
-        MetaTableLookupSource metaSource = new MetaTableLookupSource(operationsClient, TopologyUtil.INSTACE);
-
-        Supplier<LocationCache> cacheSupplier = new Supplier<LocationCache>() {
-            @Override
-            public LocationCache get() {
-                return new LocationCache();
-            }
-        };
-
-        curator = CuratorFrameworkFactory.newClient("localhost:2181/hbase", new RetryNTimes(5, 100));
-        curator.start();
-
-        clusterTopology = new ZookeeperHbaseClusterTopology(curator);
-        clusterTopology.startAndWait();
-
-        RootTableLookupSource rootTableLookupSource = new RootTableLookupSource(clusterTopology, operationsClient, TopologyUtil.INSTACE);
-        RootTable rootTable = new RootTable(rootTableLookupSource, new LocationCache());
-
-        metaTable = new MetaTable(metaSource, cacheSupplier, rootTable);
+        metaService = HbaseMetaServiceFactory.create(requestManager, sender);
+        metaService.startAndWait();
     }
 
     @AfterClass
     public static void tearDown() throws Exception {
+        metaService.stopAndWait();
         dispatcherService.stopAndWait();
-        clusterTopology.stopAndWait();
-        curator.close();
     }
 
     @Test
@@ -132,7 +100,7 @@ public class TopologyTest {
         for (Map.Entry<String, HRegionLocation> entry : expected.entrySet()) {
             byte[] key = getKey(entry.getKey());
 
-            HRegionLocation location = metaTable.getRegionServerNoCache(TABLE, key);
+            HRegionLocation location = metaService.getTopology().getRegionServerNoCache(TABLE, key);
 
             assertEquals(String.format("Expected %s but got %s for id %s", entry.getValue().toString(), location.toString(), entry.getKey()), entry.getValue(), location);
         }

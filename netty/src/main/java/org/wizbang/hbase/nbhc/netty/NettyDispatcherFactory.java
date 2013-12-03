@@ -1,4 +1,4 @@
-package org.wizbang.hbase.nbhc;
+package org.wizbang.hbase.nbhc.netty;
 
 import com.codahale.metrics.Gauge;
 import com.google.common.base.Preconditions;
@@ -7,11 +7,10 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.jboss.netty.bootstrap.ClientBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
+import org.wizbang.hbase.nbhc.HbaseClientMetrics;
+import org.wizbang.hbase.nbhc.RegionServerDispatcherService;
 import org.wizbang.hbase.nbhc.dispatch.RegionServerDispatcher;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.netty.DisconnectCallback;
-import org.wizbang.hbase.nbhc.netty.HostChannelProvider;
-import org.wizbang.hbase.nbhc.netty.NettyRegionServerDispatcher;
 import org.wizbang.hbase.nbhc.netty.pipeline.HbaseClientPipelineFactory;
 
 import java.util.concurrent.ExecutorService;

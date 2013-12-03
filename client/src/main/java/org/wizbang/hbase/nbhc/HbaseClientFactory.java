@@ -2,37 +2,33 @@ package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.AbstractIdleService;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.client.HConnection;
-import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
+import org.wizbang.hbase.nbhc.netty.NettyDispatcherFactory;
 import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.topology.HConnectionRegionOwnershipTopology;
-import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
+import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
+import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 
 public final class HbaseClientFactory {
 
-    public static HbaseClientService create(Configuration hbaseConfig) {
+    public static HbaseClientService create() {
         RequestManager requestManager = new RequestManager();
 
         RegionServerDispatcherService dispatcherService = NettyDispatcherFactory.create(requestManager);
 
-        return new ClientService(hbaseConfig, requestManager, dispatcherService);
+        return new ClientService(requestManager, dispatcherService);
     }
 
     private static final class ClientService extends AbstractIdleService implements HbaseClientService {
 
-        private final Configuration hbaseConfig;
         private final RequestManager requestManager;
         private final RegionServerDispatcherService dispatcherService;
 
+        private HbaseMetaService metaService;
+
         private HbaseClient client;
 
-        private ClientService(Configuration hbaseConfig,
-                              RequestManager requestManager,
+        private ClientService(RequestManager requestManager,
                               RegionServerDispatcherService dispatcherService) {
-            this.hbaseConfig = hbaseConfig;
             this.requestManager = requestManager;
             this.dispatcherService = dispatcherService;
         }
@@ -41,24 +37,17 @@ public final class HbaseClientFactory {
         protected void startUp() throws Exception {
             dispatcherService.startAndWait();
 
-            HConnection hconn;
-            try {
-                hconn = HConnectionManager.createConnection(hbaseConfig);
-                hconn.getRegionLocation(HConstants.ROOT_TABLE_NAME, HConstants.EMPTY_BYTE_ARRAY, false);
-            }
-            catch (Exception e) {
-                throw new RuntimeException("Error creating hbase connection", e);
-            }
-
-            RegionOwnershipTopology topology = new HConnectionRegionOwnershipTopology(hconn);
-
             RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
-            client = new HbaseClient(topology, sender, requestManager, 1);
+            metaService = HbaseMetaServiceFactory.create(requestManager, sender);
+            metaService.startAndWait();
+
+            client = new HbaseClient(metaService.getTopology(), sender, requestManager, 1);
         }
 
         @Override
         protected void shutDown() throws Exception {
+            metaService.stopAndWait();
             dispatcherService.stopAndWait();
         }
 

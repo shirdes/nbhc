@@ -8,9 +8,11 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang.math.RandomUtils;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HBaseConfiguration;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -41,11 +43,7 @@ public class ClientTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        Configuration config = HBaseConfiguration.create();
-        config.set("zookeeper.znode.parent", "/hbase");
-        config.set("hbase.zookeeper.quorum", "localhost:2181");
-
-        clientService = HbaseClientFactory.create(config);
+        clientService = HbaseClientFactory.create();
         clientService.startAndWait();
         client = clientService.getClient();
     }
