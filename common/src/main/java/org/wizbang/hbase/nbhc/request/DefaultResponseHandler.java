@@ -8,10 +8,14 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.ipc.RemoteException;
+import org.apache.log4j.LogManager;
+import org.apache.log4j.Logger;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 
-public class DefaultResponseHandler<R> implements ResponseHandler {
+public final class DefaultResponseHandler<R> implements ResponseHandler {
+
+    private static final Logger log = LogManager.getLogger(DefaultResponseHandler.class);
 
     private final ResultBroker<R> resultBroker;
     private final Function<HRegionLocation, Invocation> invocationBuilder;
@@ -46,15 +50,36 @@ public class DefaultResponseHandler<R> implements ResponseHandler {
 
     @Override
     public void handleRemoteError(RemoteError error, int attempt) {
-        if (isRegionLocationError(error) && attempt <= maxRetries) {
-            currentLocation = updatedLocationSupplier.get();
-            Invocation invocation = invocationBuilder.apply(currentLocation);
-            sender.sendRequestForBroker(currentLocation, invocation, resultBroker, this, attempt + 1);
+        boolean locationError = isRegionLocationError(error);
+        if (locationError) {
+            if (attempt <= maxRetries) {
+                retryOperation(attempt, error);
+            }
+            else {
+                resultBroker.communicateError(new RuntimeException(
+                    String.format("Max attempts of %d for operation reached!", maxRetries),
+                    constructRemoteException(error))
+                );
+            }
         }
         else {
-            resultBroker.communicateError(new RemoteException(error.getErrorClass(),
-                    error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : ""));
+            resultBroker.communicateError(constructRemoteException(error));
         }
+    }
+
+    private RemoteException constructRemoteException(RemoteError error) {
+        return new RemoteException(error.getErrorClass(),
+                error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : "");
+    }
+
+    private void retryOperation(int attempt, RemoteError locationError) {
+        if (log.isDebugEnabled()) {
+            log.debug(String.format("Attempt %d failed with a retriable region location error", attempt), constructRemoteException(locationError));
+        }
+
+        currentLocation = updatedLocationSupplier.get();
+        Invocation invocation = invocationBuilder.apply(currentLocation);
+        sender.sendRequestForBroker(currentLocation, invocation, resultBroker, this, attempt + 1);
     }
 
     private boolean isRegionLocationError(RemoteError error) {

@@ -4,6 +4,7 @@ import com.codahale.metrics.Timer;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.net.HostAndPort;
+import org.jboss.netty.channel.ChannelFutureListener;
 import org.wizbang.hbase.nbhc.HbaseClientMetrics;
 import org.wizbang.hbase.nbhc.dispatch.ConnectionHelloMessage;
 import org.jboss.netty.bootstrap.ClientBootstrap;
@@ -14,6 +15,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -79,11 +81,9 @@ public class HostChannelProvider {
     }
 
     private Channel createChannel(InetSocketAddress host) {
-
         ChannelFuture future = bootstrap.connect(host);
         try {
-            // TODO: expose to config
-            if (!future.await(10, TimeUnit.SECONDS)) {
+            if (!waitForOperation(future)) {
                 throw new RuntimeException("Unable to connect to host " + host);
             }
         }
@@ -107,8 +107,7 @@ public class HostChannelProvider {
     private boolean sendHelloMessage(Channel channel) {
         ChannelFuture future = channel.write(ConnectionHelloMessage.INSTANCE);
         try {
-            // TODO: expose to config
-            if (!future.await(10, TimeUnit.SECONDS)) {
+            if (!waitForOperation(future)) {
                 throw new RuntimeException("Unable to send hello message on channel");
             }
         }
@@ -118,6 +117,19 @@ public class HostChannelProvider {
         }
 
         return future.isSuccess();
+    }
+
+    private boolean waitForOperation(ChannelFuture future) throws InterruptedException {
+        final CountDownLatch latch = new CountDownLatch(1);
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                latch.countDown();
+            }
+        });
+
+        // TODO: config
+        return latch.await(10, TimeUnit.SECONDS);
     }
 
     public void shutdown() {

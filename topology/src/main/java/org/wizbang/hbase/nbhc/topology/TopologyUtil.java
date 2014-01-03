@@ -55,6 +55,7 @@ public class TopologyUtil {
 
         HRegionInfo regionInfo;
         try {
+            // TODO: pretty sure we can do this without the Writables object...
             regionInfo = (HRegionInfo) Writables.getWritable(value, new HRegionInfo());
         }
         catch (IOException e) {
