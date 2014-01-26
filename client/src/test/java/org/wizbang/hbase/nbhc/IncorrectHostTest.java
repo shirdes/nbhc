@@ -1,8 +1,11 @@
 package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Charsets;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.apache.commons.lang.math.RandomUtils;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
@@ -20,7 +23,10 @@ import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
+import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
+import static org.apache.commons.lang.RandomStringUtils.randomAlphanumeric;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
@@ -38,6 +44,8 @@ public class IncorrectHostTest {
 
     private static RequestManager requestManager;
     private static RequestSender sender;
+    private static RetryExecutor retryExecutor;
+    private static HbaseClientConfiguration clientConfig;
 
     private static RegionServerDispatcherService dispatcherService;
     private static HbaseMetaService metaService;
@@ -51,7 +59,10 @@ public class IncorrectHostTest {
 
         sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
-        metaService = HbaseMetaServiceFactory.create(requestManager, sender);
+        clientConfig = new HbaseClientConfiguration();
+        retryExecutor = new SchedulerWithWorkersRetryExecutor(clientConfig);
+
+        metaService = HbaseMetaServiceFactory.create(requestManager, sender, retryExecutor, clientConfig);
         metaService.startAndWait();
     }
 
@@ -78,7 +89,7 @@ public class IncorrectHostTest {
             }
         };
 
-        HbaseClient badClient = new HbaseClient(badTopology, sender, requestManager, 3);
+        HbaseClient badClient = new HbaseClientImpl(badTopology, sender, requestManager, retryExecutor, clientConfig);
 
         byte[] row = Bytes.toBytes(UUID.randomUUID().toString());
         Put put = new Put(row);
@@ -93,5 +104,57 @@ public class IncorrectHostTest {
 
         byte[] v = result.getValue(FAMILY, COL);
         assertEquals("blah", Bytes.toString(v));
+    }
+
+    @Test
+    public void testIncorrectHostMultiAction() throws Exception {
+        final RegionOwnershipTopology topology = metaService.getTopology();
+
+        RegionOwnershipTopology badTopology = new RegionOwnershipTopology() {
+            @Override
+            public HRegionLocation getRegionServer(String table, byte[] targetRow) {
+                HRegionLocation actual = topology.getRegionServer(table, targetRow);
+                return RandomUtils.nextInt() % 2 == 0
+                        ? actual
+                        : new HRegionLocation(actual.getRegionInfo(), HOST_SWAP.get(actual.getHostname()), actual.getPort());
+            }
+
+            @Override
+            public HRegionLocation getRegionServerNoCache(String table, byte[] targetRow) {
+                return topology.getRegionServerNoCache(table, targetRow);
+            }
+        };
+
+        HbaseClient client = new HbaseClientImpl(badTopology, sender, requestManager, retryExecutor, clientConfig);
+
+        Map<String, String> values = Maps.newHashMap();
+        for (int i = 0; i < 25; i++) {
+            values.put(randomAlphanumeric(10), randomAlphabetic(8));
+        }
+
+        ImmutableList.Builder<Put> puts = ImmutableList.builder();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            Put put = new Put(Bytes.toBytes(entry.getKey()));
+            put.add(FAMILY, COL, Bytes.toBytes(entry.getValue()));
+            puts.add(put);
+        }
+
+        ListenableFuture<Void> future = client.multiPut(TABLE, puts.build());
+        future.get(60, TimeUnit.SECONDS);
+
+        ImmutableList.Builder<Get> gets = ImmutableList.builder();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            gets.add(new Get(Bytes.toBytes(entry.getKey())));
+        }
+
+        ListenableFuture<ImmutableList<Result>> getFuture = client.multiGet(TABLE, gets.build());
+        ImmutableList<Result> results = getFuture.get(60, TimeUnit.SECONDS);
+
+        Map<String, String> retrieved = Maps.newHashMap();
+        for (Result result : results) {
+            retrieved.put(Bytes.toString(result.getRow()), Bytes.toString(result.getValue(FAMILY, COL)));
+        }
+
+        assertEquals(values, retrieved);
     }
 }

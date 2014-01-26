@@ -10,6 +10,8 @@ import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
+import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
+import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 
@@ -22,7 +24,8 @@ public final class DefaultResponseHandler<R> implements ResponseHandler {
     private final ResponseProcessor<R> responseProcessor;
     private final Supplier<HRegionLocation> updatedLocationSupplier;
     private final RequestSender sender;
-    private final int maxRetries;
+    private final RetryExecutor retryExecutor;
+    private final HbaseClientConfiguration config;
 
     private HRegionLocation currentLocation;
 
@@ -32,13 +35,15 @@ public final class DefaultResponseHandler<R> implements ResponseHandler {
                                   ResponseProcessor<R> responseProcessor,
                                   Supplier<HRegionLocation> updatedLocationSupplier,
                                   RequestSender sender,
-                                  int maxRetries) {
+                                  RetryExecutor retryExecutor,
+                                  HbaseClientConfiguration config) {
         this.resultBroker = resultBroker;
         this.invocationBuilder = invocationBuilder;
         this.responseProcessor = responseProcessor;
         this.updatedLocationSupplier = updatedLocationSupplier;
         this.sender = sender;
-        this.maxRetries = maxRetries;
+        this.retryExecutor = retryExecutor;
+        this.config = config;
 
         this.currentLocation = location;
     }
@@ -52,18 +57,22 @@ public final class DefaultResponseHandler<R> implements ResponseHandler {
     public void handleRemoteError(RemoteError error, int attempt) {
         boolean locationError = isRegionLocationError(error);
         if (locationError) {
-            if (attempt <= maxRetries) {
-                retryOperation(attempt, error);
-            }
-            else {
-                resultBroker.communicateError(new RuntimeException(
-                    String.format("Max attempts of %d for operation reached!", maxRetries),
-                    constructRemoteException(error))
-                );
-            }
+            handleLocationError(error, attempt);
         }
         else {
             resultBroker.communicateError(constructRemoteException(error));
+        }
+    }
+
+    private void handleLocationError(RemoteError error, int attempt) {
+        if (attempt <= config.maxLocationErrorRetries) {
+            retryOperation(attempt, error);
+        }
+        else {
+            resultBroker.communicateError(new RuntimeException(
+                String.format("Max attempts of %d for operation reached!", config.maxLocationErrorRetries),
+                constructRemoteException(error))
+            );
         }
     }
 
@@ -72,11 +81,22 @@ public final class DefaultResponseHandler<R> implements ResponseHandler {
                 error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : "");
     }
 
-    private void retryOperation(int attempt, RemoteError locationError) {
+    private void retryOperation(final int attempt, RemoteError locationError) {
         if (log.isDebugEnabled()) {
             log.debug(String.format("Attempt %d failed with a retriable region location error", attempt), constructRemoteException(locationError));
         }
 
+        Runnable retry = new Runnable() {
+            @Override
+            public void run() {
+                executeRetry(attempt);
+            }
+        };
+
+        retryExecutor.retry(retry);
+    }
+
+    private void executeRetry(int attempt) {
         currentLocation = updatedLocationSupplier.get();
         Invocation invocation = invocationBuilder.apply(currentLocation);
         sender.sendRequestForBroker(currentLocation, invocation, resultBroker, this, attempt + 1);

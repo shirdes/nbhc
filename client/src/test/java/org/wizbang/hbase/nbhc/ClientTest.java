@@ -43,7 +43,7 @@ public class ClientTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        clientService = HbaseClientFactory.create();
+        clientService = HbaseClientFactory.create(new HbaseClientConfiguration());
         clientService.startAndWait();
         client = clientService.getClient();
     }

@@ -58,7 +58,9 @@ public class TopologyTest {
 
         RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
-        metaService = HbaseMetaServiceFactory.create(requestManager, sender);
+        HbaseClientConfiguration clientConfig = new HbaseClientConfiguration();
+
+        metaService = HbaseMetaServiceFactory.create(requestManager, sender, new SchedulerWithWorkersRetryExecutor(clientConfig), clientConfig);
         metaService.startAndWait();
     }
 

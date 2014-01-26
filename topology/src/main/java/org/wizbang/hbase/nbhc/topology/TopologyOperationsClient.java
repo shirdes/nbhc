@@ -8,6 +8,8 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
+import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
 import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
@@ -20,12 +22,17 @@ public class TopologyOperationsClient implements TopologyOperations {
 
     private final RequestSender sender;
     private final OperationFutureSupplier futureSupplier;
-    private final int maxRetries;
+    private final RetryExecutor retryExecutor;
+    private final HbaseClientConfiguration config;
 
-    public TopologyOperationsClient(RequestSender sender, OperationFutureSupplier futureSupplier, int maxRetries) {
+    public TopologyOperationsClient(RequestSender sender,
+                                    OperationFutureSupplier futureSupplier,
+                                    RetryExecutor retryExecutor,
+                                    HbaseClientConfiguration config) {
         this.sender = sender;
         this.futureSupplier = futureSupplier;
-        this.maxRetries = maxRetries;
+        this.retryExecutor = retryExecutor;
+        this.config = config;
     }
 
     @Override
@@ -53,7 +60,8 @@ public class TopologyOperationsClient implements TopologyOperations {
                 processor,
                 locationSupplier,
                 sender,
-                maxRetries
+                retryExecutor,
+                config
         );
 
         sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);

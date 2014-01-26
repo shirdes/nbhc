@@ -12,6 +12,7 @@ import org.apache.hadoop.hbase.client.MultiAction;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
@@ -47,6 +48,7 @@ public class MultiActionController<A extends Row> {
     private final ResultBroker<ImmutableList<Result>> resultBroker;
     private final RegionOwnershipTopology topology;
     private final RequestSender sender;
+    private final RetryExecutor retryExecutor;
 
     private final Object resultGatheringLock = new Object();
 
@@ -57,9 +59,10 @@ public class MultiActionController<A extends Row> {
                                                 ImmutableList<A> actions,
                                                 ResultBroker<ImmutableList<Result>> resultBroker,
                                                 RegionOwnershipTopology topology,
-                                                RequestSender sender) {
+                                                RequestSender sender,
+                                                RetryExecutor retryExecutor) {
 
-        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology, sender);
+        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology, sender, retryExecutor);
         controller.begin();
     }
 
@@ -67,12 +70,14 @@ public class MultiActionController<A extends Row> {
                                   ImmutableList<A> actions,
                                   ResultBroker<ImmutableList<Result>> resultBroker,
                                   RegionOwnershipTopology topology,
-                                  RequestSender sender) {
+                                  RequestSender sender,
+                                  RetryExecutor retryExecutor) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
         this.topology = topology;
         this.sender = sender;
+        this.retryExecutor = retryExecutor;
     }
 
     private void begin() {
@@ -87,15 +92,14 @@ public class MultiActionController<A extends Row> {
         }
 
         if (!retryActionIndexes.isEmpty()) {
-            ImmutableList.Builder<A> retryActions = ImmutableList.builder();
-            for (Integer index : retryActionIndexes) {
-                retryActions.add(actions.get(index));
-            }
-
-            sendActionRequests(retryActions.build(), forceUncachedLocationLookup);
-            return;
+            retry(retryActionIndexes);
         }
+        else {
+            determineCompletionStatus();
+        }
+    }
 
+    private void determineCompletionStatus() {
         Optional<ImmutableList<Result>> completedResult = Optional.absent();
         synchronized (resultGatheringLock) {
             if (!gatheringComplete && (actions.size() == gatheredResults.size())) {
@@ -107,6 +111,24 @@ public class MultiActionController<A extends Row> {
         if (completedResult.isPresent()) {
             resultBroker.communicateResult(completedResult.get());
         }
+    }
+
+    private void retry(ImmutableSet<Integer> retryActionIndexes) {
+        // TODO: maximum number of retries allowed??
+        ImmutableList.Builder<A> builder = ImmutableList.builder();
+        for (Integer index : retryActionIndexes) {
+            builder.add(actions.get(index));
+        }
+
+        final ImmutableList<A> retryActions = builder.build();
+        Runnable retry = new Runnable() {
+            @Override
+            public void run() {
+                sendActionRequests(retryActions, forceUncachedLocationLookup);
+            }
+        };
+
+        retryExecutor.retry(retry);
     }
 
     void processUnrecoverableError(Throwable error) {
