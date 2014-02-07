@@ -1,7 +1,6 @@
 package org.wizbang.hbase.nbhc.topology;
 
 import com.google.common.base.Charsets;
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import org.apache.hadoop.hbase.HConstants;
@@ -11,10 +10,10 @@ import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
-import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
 import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
+import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
+import org.wizbang.hbase.nbhc.request.SingleActionController;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
@@ -36,35 +35,38 @@ public class TopologyOperationsClient implements TopologyOperations {
     }
 
     @Override
-    public Optional<Result> getRowOrBefore(byte[] row, Supplier<HRegionLocation> locationSupplier) {
-        HRegionLocation location = locationSupplier.get();
-        final Invocation invocation = new Invocation(GET_CLOSEST_ROW_BEFORE_METHOD, TARGET_PROTOCOL, new Object[]{
-                location.getRegionInfo().getRegionName(),
-                row,
-                HConstants.CATALOG_FAMILY
-        });
-
-        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
+    public Optional<Result> getRowOrBefore(final byte[] row, Supplier<HRegionLocation> locationSupplier) {
+        final HRegionLocation location = locationSupplier.get();
+        RequestDetailProvider requestDetailProvider = new RequestDetailProvider() {
             @Override
-            public Invocation apply(HRegionLocation location) {
-                return invocation;
+            public HRegionLocation getLocation() {
+                return location;
+            }
+
+            @Override
+            public HRegionLocation getRetryLocation() {
+                return location;
+            }
+
+            @Override
+            public Invocation getInvocation(HRegionLocation targetLocation) {
+                return new Invocation(GET_CLOSEST_ROW_BEFORE_METHOD, TARGET_PROTOCOL, new Object[]{
+                        targetLocation.getRegionInfo().getRegionName(),
+                        row,
+                        HConstants.CATALOG_FAMILY
+                });
             }
         };
 
         HbaseOperationResultFuture<Result> future = futureSupplier.create();
-        SimpleParseResponseProcessor<Result> processor = new SimpleParseResponseProcessor<Result>(GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER);
-        DefaultResponseHandler<Result> responseHandler = new DefaultResponseHandler<Result>(
-                location,
+        SingleActionController.initiate(
+                requestDetailProvider,
                 future,
-                invocationBuilder,
-                processor,
-                locationSupplier,
+                GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER,
                 sender,
                 retryExecutor,
                 config
         );
-
-        sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);
 
         // TODO: need a timeout
         Result result;

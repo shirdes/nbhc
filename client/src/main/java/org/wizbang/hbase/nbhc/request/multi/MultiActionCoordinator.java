@@ -14,6 +14,7 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
+import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -27,7 +28,7 @@ import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
 // TODO: need to consider if we should have this class control the future that is returned for the multi action and then
 // TODO: put in place a callback on that future to handle the case where the caller determines that the requests is
 // TODO: timed out so that we can clear any outstanding callbacks??
-public class MultiActionController<A extends Row> {
+public class MultiActionCoordinator<A extends Row> {
 
     private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
         @Override
@@ -62,16 +63,16 @@ public class MultiActionController<A extends Row> {
                                                 RequestSender sender,
                                                 RetryExecutor retryExecutor) {
 
-        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology, sender, retryExecutor);
+        MultiActionCoordinator<A> controller = new MultiActionCoordinator<A>(table, actions, resultBroker, topology, sender, retryExecutor);
         controller.begin();
     }
 
-    private MultiActionController(String table,
-                                  ImmutableList<A> actions,
-                                  ResultBroker<ImmutableList<Result>> resultBroker,
-                                  RegionOwnershipTopology topology,
-                                  RequestSender sender,
-                                  RetryExecutor retryExecutor) {
+    private MultiActionCoordinator(String table,
+                                   ImmutableList<A> actions,
+                                   ResultBroker<ImmutableList<Result>> resultBroker,
+                                   RegionOwnershipTopology topology,
+                                   RequestSender sender,
+                                   RetryExecutor retryExecutor) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
@@ -140,11 +141,32 @@ public class MultiActionController<A extends Row> {
         for (HRegionLocation location : locationActions.keySet()) {
             MultiAction<A> multiAction = locationActions.get(location);
 
-            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
+            final Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
 
-            MultiActionResponseHandler<A> responseHandler = new MultiActionResponseHandler<A>(this);
+            MultiActionRequestResponseController<A> controller = new MultiActionRequestResponseController<A>(this);
 
-            sender.sendRequest(location, invocation, responseHandler, 1);
+            final HRegionLocation requestLocation = location;
+            RequestDetailProvider requestDetailProvider = new RequestDetailProvider() {
+                @Override
+                public HRegionLocation getLocation() {
+                    return requestLocation;
+                }
+
+                @Override
+                public HRegionLocation getRetryLocation() {
+                    // TODO: abstraction breaking down here because of different retry semantics...
+                    return requestLocation;
+                }
+
+                @Override
+                public Invocation getInvocation(HRegionLocation targetLocation) {
+                    return invocation;
+                }
+            };
+
+            // TODO: in other places we've used the pattern of having the controller with a static method to
+            // TODO: tie the instantiation and send together...
+            sender.sendRequest(requestDetailProvider, controller);
         }
     }
 

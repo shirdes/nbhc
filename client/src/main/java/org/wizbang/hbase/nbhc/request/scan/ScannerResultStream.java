@@ -9,18 +9,18 @@ import java.io.IOException;
 
 public class ScannerResultStream extends AbstractIterator<Result> implements Closeable {
 
-    private final ScanController scanController;
+    private final ScanCoordinator scanCoordinator;
 
     private final Supplier<ScannerBatchResult> batchLoader;
 
     private SingleRegionScannerResultStream currentRegionStream = null;
 
-    public ScannerResultStream(ScanController scanController) {
-        this.scanController = scanController;
+    public ScannerResultStream(ScanCoordinator scanCoordinator) {
+        this.scanCoordinator = scanCoordinator;
         this.batchLoader = new Supplier<ScannerBatchResult>() {
             @Override
             public ScannerBatchResult get() {
-                return ScannerResultStream.this.scanController.loadNextBatch();
+                return ScannerResultStream.this.scanCoordinator.loadNextBatch();
             }
         };
     }
@@ -28,7 +28,7 @@ public class ScannerResultStream extends AbstractIterator<Result> implements Clo
     @Override
     protected Result computeNext() {
         while (!isNextAvailableFromCurrentStream() && isNextRegionStreamAvailable()) {
-            if (!scanController.openNextScannerId()) {
+            if (!scanCoordinator.openNextScannerId()) {
                 break;
             }
 
@@ -49,6 +49,6 @@ public class ScannerResultStream extends AbstractIterator<Result> implements Clo
 
     @Override
     public void close() throws IOException {
-        scanController.closeOpenScanner();
+        scanCoordinator.closeOpenScanner();
     }
 }

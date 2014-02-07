@@ -2,7 +2,7 @@ package org.wizbang.hbase.nbhc.response;
 
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 
-public interface ResponseCallback {
+public interface RequestResponseController {
 
     void receiveResponse(HbaseObjectWritable value);
 

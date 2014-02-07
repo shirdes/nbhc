@@ -2,8 +2,6 @@ package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -18,20 +16,11 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.request.DefaultResponseHandler;
+import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.ResponseProcessor;
-import org.wizbang.hbase.nbhc.request.SimpleParseResponseProcessor;
-import org.wizbang.hbase.nbhc.request.multi.MultiActionController;
-import org.wizbang.hbase.nbhc.request.scan.ScanCloser;
-import org.wizbang.hbase.nbhc.request.scan.ScanController;
-import org.wizbang.hbase.nbhc.request.scan.ScanOpener;
-import org.wizbang.hbase.nbhc.request.scan.ScanOperationConfig;
-import org.wizbang.hbase.nbhc.request.scan.ScanResultsLoader;
-import org.wizbang.hbase.nbhc.request.scan.ScannerBatchResult;
-import org.wizbang.hbase.nbhc.request.scan.ScannerNextBatchResponseHandler;
-import org.wizbang.hbase.nbhc.request.scan.ScannerOpenResult;
+import org.wizbang.hbase.nbhc.request.SingleActionController;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionCoordinator;
+import org.wizbang.hbase.nbhc.request.scan.ScanCoordinator;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -108,32 +97,13 @@ public class HbaseClientImpl implements HbaseClient {
 
     @Override
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
-        // TODO: ensure that the Scan object has a value set for caching?  Otherwise we'd have to have a default given
-        // TODO: to this client as a data member?
-        // TODO: need to get the timeouts from somewhere
-        ScanOperationConfig config = ScanOperationConfig.newBuilder()
-                .build();
-
-        ScanController controller = new ScanController(
-                table, scan,
-                new ScanOpener() {
-                    @Override
-                    public ListenableFuture<ScannerOpenResult> open(String table, Scan scan) {
-                        return openScanner(table, scan);
-                    }
-                },
-                new ScanResultsLoader() {
-                    @Override
-                    public ListenableFuture<ScannerBatchResult> load(HRegionLocation location, long scannerId) {
-                        return getScannerNextBatch(location, scannerId, scan.getCaching());
-                    }
-                },
-                new ScanCloser() {
-                    @Override
-                    public ListenableFuture<Void> close(HRegionLocation location, long scannerId) {
-                        return closeScanner(location, scannerId);
-                    }
-                },
+        ScanCoordinator controller = new ScanCoordinator(
+                table,
+                scan,
+                sender,
+                requestManager,
+                retryExecutor,
+                topology,
                 config
         );
 
@@ -158,15 +128,7 @@ public class HbaseClientImpl implements HbaseClient {
             }
         };
 
-        // TODO: this should be a singleton
-        ResponseProcessor<Long> responseProcessor = new ResponseProcessor<Long>() {
-            @Override
-            public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<Long> resultBroker) {
-                resultBroker.communicateResult(INCREMENT_COL_VALUE_RESPONSE_PARSER.apply(received));
-            }
-        };
-
-        return singleActionRequest(table, column, rowExtractor, invocationBuilder, responseProcessor);
+        return singleActionRequest(table, column, rowExtractor, invocationBuilder, INCREMENT_COL_VALUE_RESPONSE_PARSER);
     }
 
     public <A extends Row> ListenableFuture<Boolean> checkedAction(String table,
@@ -198,40 +160,41 @@ public class HbaseClientImpl implements HbaseClient {
                                                                    Function<HRegionLocation, Invocation> invocationBuilder,
                                                                    Function<HbaseObjectWritable, R> responseParser) {
 
-        SimpleParseResponseProcessor<R> processor = new SimpleParseResponseProcessor<R>(responseParser);
-        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, processor);
+        return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, responseParser);
     }
 
     public <P, R> ListenableFuture<R> singleActionRequest(final String table,
                                                           final P param,
                                                           final Function<? super P, byte[]> rowExtractor,
-                                                          Function<HRegionLocation, Invocation> invocationBuilder,
-                                                          ResponseProcessor<R> responseProcessor) {
-
-        HRegionLocation location = topology.getRegionServer(table, rowExtractor.apply(param));
-
-        Supplier<HRegionLocation> updatedLocationSupplier = new Supplier<HRegionLocation>() {
+                                                          final Function<HRegionLocation, Invocation> invocationBuilder,
+                                                          Function<HbaseObjectWritable, R> responseParser) {
+        final byte[] row = rowExtractor.apply(param);
+        RequestDetailProvider detailProvider = new RequestDetailProvider() {
             @Override
-            public HRegionLocation get() {
-                return topology.getRegionServerNoCache(table, rowExtractor.apply(param));
+            public HRegionLocation getLocation() {
+                return topology.getRegionServer(table, row);
+            }
+
+            @Override
+            public HRegionLocation getRetryLocation() {
+                return topology.getRegionServerNoCache(table, row);
+            }
+
+            @Override
+            public Invocation getInvocation(HRegionLocation targetLocation) {
+                return invocationBuilder.apply(targetLocation);
             }
         };
 
-        Invocation invocation = invocationBuilder.apply(location);
-
         HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
-        DefaultResponseHandler<R> responseHandler = new DefaultResponseHandler<R>(
-                location,
+        SingleActionController.initiate(
+                detailProvider,
                 future,
-                invocationBuilder,
-                responseProcessor,
-                updatedLocationSupplier,
+                responseParser,
                 sender,
                 retryExecutor,
                 config
         );
-
-        sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);
 
         return future;
     }
@@ -258,83 +221,13 @@ public class HbaseClientImpl implements HbaseClient {
         };
     }
 
-    private ListenableFuture<ScannerOpenResult> openScanner(final String table, final Scan scan) {
-        Function<Object, byte[]> rowExtractor = Functions.constant(scan.getStartRow());
-
-        // TODO: this can be static
-        ResponseProcessor<ScannerOpenResult> responseProcessor = new ResponseProcessor<ScannerOpenResult>() {
-            @Override
-            public void process(HRegionLocation location, HbaseObjectWritable received, ResultBroker<ScannerOpenResult> resultBroker) {
-                Long scannerId = OPEN_SCANNER_RESPONSE_PARSER.apply(received);
-                resultBroker.communicateResult(new ScannerOpenResult(location, scannerId));
-            }
-        };
-
-        Function<HRegionLocation, Invocation> invocationBuilder =
-                createLocationAndParamInvocationBuilder(OPEN_SCANNER_TARGET_METHOD, scan);
-
-        return singleActionRequest(table, scan, rowExtractor, invocationBuilder, responseProcessor);
-    }
-
-    private ListenableFuture<Void> closeScanner(HRegionLocation location, long scannerId) {
-        final Invocation invocation = new Invocation(CLOSE_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{scannerId});
-        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
-            @Override
-            public Invocation apply(HRegionLocation input) {
-                return invocation;
-            }
-        };
-
-        Supplier<HRegionLocation> sameLocationProvider = Suppliers.ofInstance(location);
-
-        SimpleParseResponseProcessor<Void> responseProcessor = new SimpleParseResponseProcessor<Void>(CLOSE_SCANNER_RESPONSE_PARSER);
-
-        HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
-        DefaultResponseHandler<Void> responseHandler = new DefaultResponseHandler<Void>(
-                location,
-                future,
-                invocationBuilder,
-                responseProcessor,
-                sameLocationProvider,
-                sender,
-                retryExecutor,
-                config
-        );
-
-        sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);
-
-        return future;
-    }
-
-    // TODO: don't like having a method with two numbers right next to each other as params. Perhaps next batch identifier object or something?
-    private ListenableFuture<ScannerBatchResult> getScannerNextBatch(final HRegionLocation location,
-                                                                     long scannerId,
-                                                                     int numResults) {
-
-        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
-                scannerId,
-                numResults
-        });
-
-        HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
-
-        ScannerNextBatchResponseHandler responseHandler = new ScannerNextBatchResponseHandler(future);
-
-        // TODO: what happens if the server says this region is not online or something and we should go back and find
-        // TODO: the updated region to issue the request to?  Somehow that will need to bubble all the way out to the
-        // TODO: state holder but don't want to tie this directly into that either :(
-        sender.sendRequestForBroker(location, invocation, future, responseHandler, 1);
-
-        return future;
-    }
-
     private <A extends Row> ListenableFuture<ImmutableList<Result>> multiActionRequest(String table,
                                                                                        ImmutableList<A> actions) {
 
         HbaseOperationResultFuture<ImmutableList<Result>> future =
                 new HbaseOperationResultFuture<ImmutableList<Result>>(requestManager);
 
-        MultiActionController.initiate(table, actions, future, topology, sender, retryExecutor);
+        MultiActionCoordinator.initiate(table, actions, future, topology, sender, retryExecutor);
 
         return future;
     }

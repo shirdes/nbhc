@@ -13,22 +13,22 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.ipc.RemoteException;
-import org.wizbang.hbase.nbhc.request.ResponseHandler;
 import org.wizbang.hbase.nbhc.response.RemoteError;
+import org.wizbang.hbase.nbhc.response.RequestResponseController;
 
-public final class MultiActionResponseHandler<P extends Row> implements ResponseHandler {
+public final class MultiActionRequestResponseController<P extends Row> implements RequestResponseController {
 
-    private final MultiActionController<P> controller;
+    private final MultiActionCoordinator<P> coordinator;
 
-    public MultiActionResponseHandler(MultiActionController<P> controller) {
-        this.controller = controller;
+    public MultiActionRequestResponseController(MultiActionCoordinator<P> coordinator) {
+        this.coordinator = coordinator;
     }
 
     @Override
-    public void handleResponse(HbaseObjectWritable received) {
+    public void receiveResponse(HbaseObjectWritable received) {
         Object responseObject = received.get();
         if (!(responseObject instanceof MultiResponse)) {
-            controller.processUnrecoverableError(new RuntimeException(String.format("Expected response of type %s but received %s",
+            coordinator.processUnrecoverableError(new RuntimeException(String.format("Expected response of type %s but received %s",
                     MultiResponse.class.getName(), responseObject.getClass().getName())));
             return;
         }
@@ -68,21 +68,21 @@ public final class MultiActionResponseHandler<P extends Row> implements Response
         }
 
         if (failure.isPresent()) {
-            controller.processUnrecoverableError(failure.get());
+            coordinator.processUnrecoverableError(failure.get());
         }
         else {
-            controller.processResponseResult(results.build(), needRetry.build());
+            coordinator.processResponseResult(results.build(), needRetry.build());
         }
     }
 
     @Override
-    public void handleRemoteError(RemoteError error, int attempt) {
-        controller.processUnrecoverableError(new RemoteException(error.getErrorClass(),
-                (error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : "")));
+    public void receiveRemoteError(RemoteError remoteError) {
+        coordinator.processUnrecoverableError(new RemoteException(remoteError.getErrorClass(),
+                (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
     }
 
     @Override
-    public void handleLocalError(Throwable error, int attempt) {
-        controller.processUnrecoverableError(error);
+    public void receiveLocalError(Throwable error) {
+        coordinator.processUnrecoverableError(error);
     }
 }

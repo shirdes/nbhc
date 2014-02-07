@@ -2,14 +2,11 @@ package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.net.HostAndPort;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.dispatch.RegionServerDispatcher;
 import org.wizbang.hbase.nbhc.dispatch.Request;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.response.RemoteError;
-import org.wizbang.hbase.nbhc.response.ResponseCallback;
+import org.wizbang.hbase.nbhc.response.RequestResponseController;
 
 public class RequestSender {
 
@@ -21,47 +18,27 @@ public class RequestSender {
         this.dispatcher = dispatcher;
     }
 
-    public int sendRequest(HRegionLocation location,
-                                       Invocation invocation,
-                                       final ResponseHandler responseHandler,
-                                       final int attempt) {
+    public int sendRequest(RequestDetailProvider requestDetailProvider,
+                           RequestResponseController controller) {
+        return send(requestDetailProvider.getLocation(), requestDetailProvider, controller);
+    }
 
-        ResponseCallback responseCallback = new ResponseCallback() {
-            @Override
-            public void receiveResponse(HbaseObjectWritable value) {
-                responseHandler.handleResponse(value);
-            }
+    public int retryRequest(RequestDetailProvider requestDetailProvider,
+                            RequestResponseController controller) {
+        return send(requestDetailProvider.getRetryLocation(), requestDetailProvider, controller);
+    }
 
-            @Override
-            public void receiveRemoteError(RemoteError remoteError) {
-                responseHandler.handleRemoteError(remoteError, attempt);
-            }
+    private int send(HRegionLocation location,
+                     RequestDetailProvider requestDetailProvider,
+                     RequestResponseController controller) {
 
-            @Override
-            public void receiveLocalError(Throwable error) {
-                responseHandler.handleLocalError(error, attempt);
-            }
-        };
+        int requestId = requestManager.registerController(controller);
 
-        final int requestId = requestManager.registerResponseCallback(responseCallback);
-
+        Invocation invocation = requestDetailProvider.getInvocation(location);
         Request request = new Request(requestId, invocation);
-        dispatcher.request(getHost(location), request);
+        HostAndPort host = HostAndPort.fromParts(location.getHostname(), location.getPort());
+        dispatcher.request(host, request);
 
         return requestId;
-    }
-
-    public void sendRequestForBroker(HRegionLocation location,
-                                     Invocation invocation,
-                                     ResultBroker<?> resultBroker,
-                                     final ResponseHandler responseHandler,
-                                     final int attempt) {
-
-        int requestId = sendRequest(location, invocation, responseHandler, attempt);
-        resultBroker.setCurrentActiveRequestId(requestId);
-    }
-
-    private HostAndPort getHost(HRegionLocation location) {
-        return HostAndPort.fromParts(location.getHostname(), location.getPort());
     }
 }

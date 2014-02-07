@@ -5,8 +5,8 @@ import com.google.common.base.Optional;
 import org.wizbang.hbase.nbhc.HbaseClientMetrics;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.netty.HostChannelProvider;
+import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import org.wizbang.hbase.nbhc.response.Response;
-import org.wizbang.hbase.nbhc.response.ResponseCallback;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.jboss.netty.channel.ChannelHandlerContext;
@@ -39,12 +39,12 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
         RESPONSES_RECEIVED_METER.mark();
 
         Response response = (Response) message;
-        Optional<ResponseCallback> lookup = requestManager.retrieveCallback(response.getRequestId());
+        Optional<RequestResponseController> lookup = requestManager.retrieveCallback(response.getRequestId());
         if (!lookup.isPresent()) {
             return;
         }
 
-        ResponseCallback callback = lookup.get();
+        RequestResponseController callback = lookup.get();
         switch (response.getType()) {
             case LOCAL_ERROR:
                 callback.receiveLocalError(response.getLocalError());
