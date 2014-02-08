@@ -14,7 +14,6 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -141,32 +140,13 @@ public class MultiActionCoordinator<A extends Row> {
         for (HRegionLocation location : locationActions.keySet()) {
             MultiAction<A> multiAction = locationActions.get(location);
 
-            final Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
+            Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
 
             MultiActionRequestResponseController<A> controller = new MultiActionRequestResponseController<A>(this);
 
-            final HRegionLocation requestLocation = location;
-            RequestDetailProvider requestDetailProvider = new RequestDetailProvider() {
-                @Override
-                public HRegionLocation getLocation() {
-                    return requestLocation;
-                }
-
-                @Override
-                public HRegionLocation getRetryLocation() {
-                    // TODO: abstraction breaking down here because of different retry semantics...
-                    return requestLocation;
-                }
-
-                @Override
-                public Invocation getInvocation(HRegionLocation targetLocation) {
-                    return invocation;
-                }
-            };
-
             // TODO: in other places we've used the pattern of having the controller with a static method to
             // TODO: tie the instantiation and send together...
-            sender.sendRequest(requestDetailProvider, controller);
+            sender.sendRequest(location, invocation, controller);
         }
     }
 

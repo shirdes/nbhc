@@ -7,7 +7,6 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.ipc.RemoteException;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
-import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.RequestResponseController;
@@ -48,25 +47,7 @@ public final class ScannerNextBatchRequestResponseController implements RequestR
     }
 
     private void launch() {
-        RequestDetailProvider requestDetailProvider = new RequestDetailProvider() {
-            @Override
-            public HRegionLocation getLocation() {
-                return location;
-            }
-
-            @Override
-            public HRegionLocation getRetryLocation() {
-                // TODO: should this ever even be supported??
-                return location;
-            }
-
-            @Override
-            public Invocation getInvocation(HRegionLocation targetLocation) {
-                return invocation;
-            }
-        };
-
-        sender.sendRequest(requestDetailProvider, this);
+        sender.sendRequest(location, invocation, this);
     }
 
     @Override

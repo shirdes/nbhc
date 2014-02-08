@@ -1,8 +1,10 @@
 package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.base.Function;
+import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.log4j.LogManager;
@@ -61,7 +63,7 @@ public final class SingleActionController<R> implements RequestResponseControlle
     }
 
     public void launch() {
-        sender.sendRequest(requestDetailProvider, this);
+        requestToLocation(requestDetailProvider.getLocation());
     }
 
     @Override
@@ -125,7 +127,12 @@ public final class SingleActionController<R> implements RequestResponseControlle
 
     private void executeRetry() {
         attempt++;
-        sender.retryRequest(requestDetailProvider, this);
+        requestToLocation(requestDetailProvider.getRetryLocation());
+    }
+
+    private void requestToLocation(HRegionLocation location) {
+        Invocation invocation = requestDetailProvider.getInvocation(location);
+        sender.sendRequest(location, invocation, this);
     }
 
     private boolean isRegionLocationError(RemoteError error) {

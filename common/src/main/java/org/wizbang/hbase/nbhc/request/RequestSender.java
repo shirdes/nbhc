@@ -18,23 +18,11 @@ public class RequestSender {
         this.dispatcher = dispatcher;
     }
 
-    public int sendRequest(RequestDetailProvider requestDetailProvider,
+    public int sendRequest(HRegionLocation location,
+                           Invocation invocation,
                            RequestResponseController controller) {
-        return send(requestDetailProvider.getLocation(), requestDetailProvider, controller);
-    }
-
-    public int retryRequest(RequestDetailProvider requestDetailProvider,
-                            RequestResponseController controller) {
-        return send(requestDetailProvider.getRetryLocation(), requestDetailProvider, controller);
-    }
-
-    private int send(HRegionLocation location,
-                     RequestDetailProvider requestDetailProvider,
-                     RequestResponseController controller) {
-
         int requestId = requestManager.registerController(controller);
 
-        Invocation invocation = requestDetailProvider.getInvocation(location);
         Request request = new Request(requestId, invocation);
         HostAndPort host = HostAndPort.fromParts(location.getHostname(), location.getPort());
         dispatcher.request(host, request);
