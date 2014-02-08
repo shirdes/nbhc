@@ -11,10 +11,14 @@ import org.apache.hadoop.hbase.client.Action;
 import org.apache.hadoop.hbase.client.MultiAction;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.apache.hadoop.ipc.RemoteException;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.response.RemoteError;
+import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.util.Map;
@@ -27,7 +31,7 @@ import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
 // TODO: need to consider if we should have this class control the future that is returned for the multi action and then
 // TODO: put in place a callback on that future to handle the case where the caller determines that the requests is
 // TODO: timed out so that we can clear any outstanding callbacks??
-public class MultiActionCoordinator<A extends Row> {
+public final class MultiActionController<A extends Row> implements RequestResponseController {
 
     private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
         @Override
@@ -48,6 +52,7 @@ public class MultiActionCoordinator<A extends Row> {
     private final ResultBroker<ImmutableList<Result>> resultBroker;
     private final RegionOwnershipTopology topology;
     private final RequestSender sender;
+    private final Function<HbaseObjectWritable, MultiActionResponse> parser;
     private final RetryExecutor retryExecutor;
 
     private final Object resultGatheringLock = new Object();
@@ -55,6 +60,7 @@ public class MultiActionCoordinator<A extends Row> {
     private final SortedMap<Integer, Result> gatheredResults = new TreeMap<Integer, Result>();
     private boolean gatheringComplete = false;
 
+    // TODO: probably protected static method for creating with passing in the parser for testing purposes
     public static <A extends Row> void initiate(String table,
                                                 ImmutableList<A> actions,
                                                 ResultBroker<ImmutableList<Result>> resultBroker,
@@ -62,21 +68,24 @@ public class MultiActionCoordinator<A extends Row> {
                                                 RequestSender sender,
                                                 RetryExecutor retryExecutor) {
 
-        MultiActionCoordinator<A> controller = new MultiActionCoordinator<A>(table, actions, resultBroker, topology, sender, retryExecutor);
+        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology,
+                sender, MultiActionResponseParser.INSTANCE, retryExecutor);
         controller.begin();
     }
 
-    private MultiActionCoordinator(String table,
-                                   ImmutableList<A> actions,
-                                   ResultBroker<ImmutableList<Result>> resultBroker,
-                                   RegionOwnershipTopology topology,
-                                   RequestSender sender,
-                                   RetryExecutor retryExecutor) {
+    private MultiActionController(String table,
+                                  ImmutableList<A> actions,
+                                  ResultBroker<ImmutableList<Result>> resultBroker,
+                                  RegionOwnershipTopology topology,
+                                  RequestSender sender,
+                                  Function<HbaseObjectWritable, MultiActionResponse> parser,
+                                  RetryExecutor retryExecutor) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
         this.topology = topology;
         this.sender = sender;
+        this.parser = parser;
         this.retryExecutor = retryExecutor;
     }
 
@@ -84,7 +93,29 @@ public class MultiActionCoordinator<A extends Row> {
         sendActionRequests(actions, allowCachedLocationLookup);
     }
 
-    void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
+    @Override
+    public void receiveResponse(HbaseObjectWritable value) {
+        MultiActionResponse response = parser.apply(value);
+        if (response.isErrorResponse()) {
+            resultBroker.communicateError(response.getError());
+        }
+        else {
+            processResponseResult(response.getResults(), response.getIndexesNeedingRetry());
+        }
+    }
+
+    @Override
+    public void receiveRemoteError(RemoteError remoteError) {
+        resultBroker.communicateError(new RemoteException(remoteError.getErrorClass(),
+                (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
+    }
+
+    @Override
+    public void receiveLocalError(Throwable error) {
+        resultBroker.communicateError(error);
+    }
+
+    private void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
                                ImmutableSet<Integer> retryActionIndexes) {
 
         synchronized (resultGatheringLock) {
@@ -131,22 +162,13 @@ public class MultiActionCoordinator<A extends Row> {
         retryExecutor.retry(retry);
     }
 
-    void processUnrecoverableError(Throwable error) {
-        resultBroker.communicateError(error);
-    }
-
     private void sendActionRequests(ImmutableList<A> sendActions, Function<byte[], HRegionLocation> locationLookup) {
         Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(sendActions, locationLookup);
         for (HRegionLocation location : locationActions.keySet()) {
             MultiAction<A> multiAction = locationActions.get(location);
 
             Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
-
-            MultiActionRequestResponseController<A> controller = new MultiActionRequestResponseController<A>(this);
-
-            // TODO: in other places we've used the pattern of having the controller with a static method to
-            // TODO: tie the instantiation and send together...
-            sender.sendRequest(location, invocation, controller);
+            sender.sendRequest(location, invocation, this);
         }
     }
 

@@ -1,5 +1,6 @@
 package org.wizbang.hbase.nbhc.request.multi;
 
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -8,29 +9,22 @@ import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.client.MultiResponse;
 import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.ipc.RemoteException;
-import org.wizbang.hbase.nbhc.response.RemoteError;
-import org.wizbang.hbase.nbhc.response.RequestResponseController;
 
-public final class MultiActionRequestResponseController<P extends Row> implements RequestResponseController {
+public final class MultiActionResponseParser implements Function<HbaseObjectWritable, MultiActionResponse> {
 
-    private final MultiActionCoordinator<P> coordinator;
+    public static final MultiActionResponseParser INSTANCE = new MultiActionResponseParser();
 
-    public MultiActionRequestResponseController(MultiActionCoordinator<P> coordinator) {
-        this.coordinator = coordinator;
-    }
+    private MultiActionResponseParser() { }
 
     @Override
-    public void receiveResponse(HbaseObjectWritable received) {
+    public MultiActionResponse apply(HbaseObjectWritable received) {
         Object responseObject = received.get();
         if (!(responseObject instanceof MultiResponse)) {
-            coordinator.processUnrecoverableError(new RuntimeException(String.format("Expected response of type %s but received %s",
+            return MultiActionResponse.error(new RuntimeException(String.format("Expected response of type %s but received %s",
                     MultiResponse.class.getName(), responseObject.getClass().getName())));
-            return;
         }
 
         MultiResponse response = (MultiResponse) responseObject;
@@ -67,22 +61,8 @@ public final class MultiActionRequestResponseController<P extends Row> implement
             }
         }
 
-        if (failure.isPresent()) {
-            coordinator.processUnrecoverableError(failure.get());
-        }
-        else {
-            coordinator.processResponseResult(results.build(), needRetry.build());
-        }
-    }
-
-    @Override
-    public void receiveRemoteError(RemoteError remoteError) {
-        coordinator.processUnrecoverableError(new RemoteException(remoteError.getErrorClass(),
-                (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
-    }
-
-    @Override
-    public void receiveLocalError(Throwable error) {
-        coordinator.processUnrecoverableError(error);
+        return failure.isPresent()
+                ? MultiActionResponse.error(failure.get())
+                : MultiActionResponse.result(results.build(), needRetry.build());
     }
 }

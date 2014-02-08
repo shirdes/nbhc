@@ -19,7 +19,7 @@ import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SingleActionController;
-import org.wizbang.hbase.nbhc.request.multi.MultiActionCoordinator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionController;
 import org.wizbang.hbase.nbhc.request.scan.ScanCoordinator;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
@@ -227,7 +227,7 @@ public class HbaseClientImpl implements HbaseClient {
         HbaseOperationResultFuture<ImmutableList<Result>> future =
                 new HbaseOperationResultFuture<ImmutableList<Result>>(requestManager);
 
-        MultiActionCoordinator.initiate(table, actions, future, topology, sender, retryExecutor);
+        MultiActionController.initiate(table, actions, future, topology, sender, retryExecutor);
 
         return future;
     }
