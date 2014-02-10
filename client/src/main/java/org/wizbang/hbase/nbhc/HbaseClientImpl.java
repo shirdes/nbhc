@@ -14,13 +14,10 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
-import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.SingleActionController;
-import org.wizbang.hbase.nbhc.request.multi.MultiActionController;
-import org.wizbang.hbase.nbhc.request.scan.ScanCoordinator;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.scan.ScannerInitiator;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -38,21 +35,18 @@ public class HbaseClientImpl implements HbaseClient {
     };
 
     private final RegionOwnershipTopology topology;
-    private final RequestSender sender;
-    private final RequestManager requestManager;
-    private final RetryExecutor retryExecutor;
-    private final HbaseClientConfiguration config;
+    private final SingleActionRequestInitiator singleActionRequestInitiator;
+    private final MultiActionRequestInitiator multiActionRequestInitiator;
+    private final ScannerInitiator scannerInitiator;
 
     public HbaseClientImpl(RegionOwnershipTopology topology,
-                           RequestSender sender,
-                           RequestManager requestManager,
-                           RetryExecutor retryExecutor,
-                           HbaseClientConfiguration config) {
+                           SingleActionRequestInitiator singleActionRequestInitiator,
+                           MultiActionRequestInitiator multiActionRequestInitiator,
+                           ScannerInitiator scannerInitiator) {
         this.topology = topology;
-        this.sender = sender;
-        this.requestManager = requestManager;
-        this.retryExecutor = retryExecutor;
-        this.config = config;
+        this.singleActionRequestInitiator = singleActionRequestInitiator;
+        this.multiActionRequestInitiator = multiActionRequestInitiator;
+        this.scannerInitiator = scannerInitiator;
     }
 
     @Override
@@ -62,7 +56,7 @@ public class HbaseClientImpl implements HbaseClient {
 
     @Override
     public ListenableFuture<ImmutableList<Result>> multiGet(String table, final ImmutableList<Get> gets) {
-        return multiActionRequest(table, gets);
+        return multiActionRequestInitiator.initiate(table, gets);
     }
 
     @Override
@@ -97,17 +91,7 @@ public class HbaseClientImpl implements HbaseClient {
 
     @Override
     public ScannerResultStream getScannerStream(String table, final Scan scan) {
-        ScanCoordinator controller = new ScanCoordinator(
-                table,
-                scan,
-                sender,
-                requestManager,
-                retryExecutor,
-                topology,
-                config
-        );
-
-        return new ScannerResultStream(controller);
+        return scannerInitiator.initiate(table, scan);
     }
 
     @Override
@@ -159,7 +143,6 @@ public class HbaseClientImpl implements HbaseClient {
                                                                    A action,
                                                                    Function<HRegionLocation, Invocation> invocationBuilder,
                                                                    Function<HbaseObjectWritable, R> responseParser) {
-
         return singleActionRequest(table, action, ROW_OPERATION_ROW_EXRACTOR, invocationBuilder, responseParser);
     }
 
@@ -186,17 +169,7 @@ public class HbaseClientImpl implements HbaseClient {
             }
         };
 
-        HbaseOperationResultFuture<R> future = new HbaseOperationResultFuture<R>(requestManager);
-        SingleActionController.initiate(
-                detailProvider,
-                future,
-                responseParser,
-                sender,
-                retryExecutor,
-                config
-        );
-
-        return future;
+        return singleActionRequestInitiator.initiate(detailProvider, responseParser);
     }
 
     private <A extends Row, R> ListenableFuture<R> simpleAction(String table,
@@ -204,36 +177,21 @@ public class HbaseClientImpl implements HbaseClient {
                                                                 final A action,
                                                                 Function<HbaseObjectWritable, R> responseParser) {
 
-        Function<HRegionLocation, Invocation> invocationBuilder = createLocationAndParamInvocationBuilder(targetMethod, action);
-        return singleRowRequest(table, action, invocationBuilder, responseParser);
-    }
-
-    private <A> Function<HRegionLocation, Invocation> createLocationAndParamInvocationBuilder(final Method targetMethod,
-                                                                                              final A action) {
-        return new Function<HRegionLocation, Invocation>() {
+        Function<HRegionLocation, Invocation> invocationBuilder = new Function<HRegionLocation, Invocation>() {
             @Override
             public Invocation apply(HRegionLocation invocationLocation) {
-                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[] {
+                return new Invocation(targetMethod, TARGET_PROTOCOL, new Object[]{
                         invocationLocation.getRegionInfo().getRegionName(),
                         action
                 });
             }
         };
-    }
 
-    private <A extends Row> ListenableFuture<ImmutableList<Result>> multiActionRequest(String table,
-                                                                                       ImmutableList<A> actions) {
-
-        HbaseOperationResultFuture<ImmutableList<Result>> future =
-                new HbaseOperationResultFuture<ImmutableList<Result>>(requestManager);
-
-        MultiActionController.initiate(table, actions, future, topology, sender, retryExecutor);
-
-        return future;
+        return singleRowRequest(table, action, invocationBuilder, responseParser);
     }
 
     private <M extends Row> ListenableFuture<Void> multiMutationRequest(String table, ImmutableList<M> mutations) {
-        ListenableFuture<ImmutableList<Result>> results = multiActionRequest(table, mutations);
+        ListenableFuture<ImmutableList<Result>> results = multiActionRequestInitiator.initiate(table, mutations);
         return Futures.transform(results, Functions.<Void>constant(null));
     }
 

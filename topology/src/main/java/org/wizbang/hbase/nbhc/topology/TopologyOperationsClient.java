@@ -3,34 +3,25 @@ package org.wizbang.hbase.nbhc.topology;
 import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
-import org.wizbang.hbase.nbhc.RetryExecutor;
-import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
-import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
-import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.SingleActionController;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
 public class TopologyOperationsClient implements TopologyOperations {
 
-    private final RequestSender sender;
-    private final OperationFutureSupplier futureSupplier;
-    private final RetryExecutor retryExecutor;
+    private final SingleActionRequestInitiator singleActionRequestInitiator;
     private final HbaseClientConfiguration config;
 
-    public TopologyOperationsClient(RequestSender sender,
-                                    OperationFutureSupplier futureSupplier,
-                                    RetryExecutor retryExecutor,
+    public TopologyOperationsClient(SingleActionRequestInitiator singleActionRequestInitiator,
                                     HbaseClientConfiguration config) {
-        this.sender = sender;
-        this.futureSupplier = futureSupplier;
-        this.retryExecutor = retryExecutor;
+        this.singleActionRequestInitiator = singleActionRequestInitiator;
         this.config = config;
     }
 
@@ -58,15 +49,8 @@ public class TopologyOperationsClient implements TopologyOperations {
             }
         };
 
-        HbaseOperationResultFuture<Result> future = futureSupplier.create();
-        SingleActionController.initiate(
-                requestDetailProvider,
-                future,
-                GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER,
-                sender,
-                retryExecutor,
-                config
-        );
+        ListenableFuture<Result> future = singleActionRequestInitiator.initiate(requestDetailProvider,
+                GET_CLOSEST_ROW_BEFORE_RESPONSE_PARSER);
 
         // TODO: need a timeout
         Result result;

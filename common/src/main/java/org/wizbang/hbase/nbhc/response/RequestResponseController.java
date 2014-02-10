@@ -4,10 +4,12 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 
 public interface RequestResponseController {
 
-    void receiveResponse(HbaseObjectWritable value);
+    void receiveResponse(int requestId, HbaseObjectWritable value);
 
-    void receiveRemoteError(RemoteError remoteError);
+    void receiveRemoteError(int requestId, RemoteError remoteError);
 
-    void receiveLocalError(Throwable error);
+    void receiveLocalError(int requestId, Throwable error);
+
+    void cancel();
 
 }

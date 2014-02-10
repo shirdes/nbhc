@@ -9,13 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class HbaseOperationResultFuture<R> extends AbstractFuture<R> implements ResultBroker<R> {
 
-    private final AtomicReference<Integer> currentActiveRequestId = new AtomicReference<Integer>(null);
-
-    private final RequestManager requestManager;
-
-    public HbaseOperationResultFuture(RequestManager requestManager) {
-        this.requestManager = requestManager;
-    }
+    private final AtomicReference<Runnable> cancelCallback = new AtomicReference<Runnable>(null);
 
     @Override
     public void communicateResult(R result) {
@@ -27,9 +21,11 @@ public final class HbaseOperationResultFuture<R> extends AbstractFuture<R> imple
         setException(error);
     }
 
-    @Override
-    public void setCurrentActiveRequestId(int activeRequestId) {
-        currentActiveRequestId.set(activeRequestId);
+    public void setCancelCallback(Runnable callback) {
+        boolean success = cancelCallback.compareAndSet(null, callback);
+        if (!success) {
+            throw new RuntimeException("Cancel callback has already been set! What are you trying to do?");
+        }
     }
 
     @Override
@@ -38,12 +34,20 @@ public final class HbaseOperationResultFuture<R> extends AbstractFuture<R> imple
             return super.get(timeout, unit);
         }
         catch (TimeoutException e) {
-            Integer requestId = currentActiveRequestId.get();
-            if (requestId != null) {
-                requestManager.unregisterResponseCallback(currentActiveRequestId.get());
-            }
-
+            issueCancelCallback();
             throw e;
+        }
+    }
+
+    @Override
+    protected void interruptTask() {
+        issueCancelCallback();
+    }
+
+    private void issueCancelCallback() {
+        Runnable callback = cancelCallback.get();
+        if (callback != null) {
+            callback.run();
         }
     }
 }

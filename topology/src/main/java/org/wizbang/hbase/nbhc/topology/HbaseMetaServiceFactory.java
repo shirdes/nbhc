@@ -1,16 +1,12 @@
 package org.wizbang.hbase.nbhc.topology;
 
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
-import org.wizbang.hbase.nbhc.RetryExecutor;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 
 public final class HbaseMetaServiceFactory {
 
-    public static HbaseMetaService create(RequestManager requestManager,
-                                          RequestSender sender,
-                                          RetryExecutor retryExecutor,
+    public static HbaseMetaService create(SingleActionRequestInitiator singleActionRequestInitiator,
                                           HbaseClientConfiguration config) {
-        return new MetaStartupService(requestManager, sender, retryExecutor, config);
+        return new MetaStartupService(singleActionRequestInitiator, config);
     }
 }

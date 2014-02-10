@@ -17,6 +17,9 @@ import org.junit.Test;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.netty.NettyDispatcherFactory;
 import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.scan.ScannerInitiator;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
@@ -50,6 +53,10 @@ public class IncorrectHostTest {
     private static RegionServerDispatcherService dispatcherService;
     private static HbaseMetaService metaService;
 
+    private static SingleActionRequestInitiator singleActionRequestInitiator;
+    private static MultiActionRequestInitiator multiActionRequestInitiator;
+    private static ScannerInitiator scannerInitiator;
+
     @BeforeClass
     public static void setUp() throws Exception {
         requestManager = new RequestManager();
@@ -62,8 +69,16 @@ public class IncorrectHostTest {
         clientConfig = new HbaseClientConfiguration();
         retryExecutor = new SchedulerWithWorkersRetryExecutor(clientConfig);
 
-        metaService = HbaseMetaServiceFactory.create(requestManager, sender, retryExecutor, clientConfig);
+        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, clientConfig);
+
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
         metaService.startAndWait();
+
+        multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor, requestManager,
+                metaService.getTopology(), clientConfig);
+
+        scannerInitiator = new ScannerInitiator(sender, requestManager, retryExecutor, metaService.getTopology(),
+                singleActionRequestInitiator, clientConfig);
     }
 
     @AfterClass
@@ -89,7 +104,8 @@ public class IncorrectHostTest {
             }
         };
 
-        HbaseClient badClient = new HbaseClientImpl(badTopology, sender, requestManager, retryExecutor, clientConfig);
+        HbaseClient badClient = new HbaseClientImpl(badTopology, singleActionRequestInitiator, multiActionRequestInitiator,
+                scannerInitiator);
 
         byte[] row = Bytes.toBytes(UUID.randomUUID().toString());
         Put put = new Put(row);
@@ -125,7 +141,8 @@ public class IncorrectHostTest {
             }
         };
 
-        HbaseClient client = new HbaseClientImpl(badTopology, sender, requestManager, retryExecutor, clientConfig);
+        HbaseClient client = new HbaseClientImpl(badTopology, singleActionRequestInitiator, multiActionRequestInitiator,
+                scannerInitiator);
 
         Map<String, String> values = Maps.newHashMap();
         for (int i = 0; i < 25; i++) {

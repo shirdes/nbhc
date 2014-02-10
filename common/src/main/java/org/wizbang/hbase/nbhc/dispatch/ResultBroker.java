@@ -6,6 +6,4 @@ public interface ResultBroker<R> {
 
     void communicateError(Throwable error);
 
-    void setCurrentActiveRequestId(int activeRequestId);
-
 }

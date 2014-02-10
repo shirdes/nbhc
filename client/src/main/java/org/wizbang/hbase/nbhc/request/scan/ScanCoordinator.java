@@ -19,12 +19,11 @@ import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.RequestSender;
-import org.wizbang.hbase.nbhc.request.SingleActionController;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
@@ -39,6 +38,7 @@ public final class ScanCoordinator {
     private final RequestManager requestManager;
     private final RetryExecutor retryExecutor;
     private final RegionOwnershipTopology topology;
+    private final SingleActionRequestInitiator singleActionRequestInitiator;
     private final HbaseClientConfiguration config;
     
     private final byte[] scanEndRow;
@@ -55,12 +55,14 @@ public final class ScanCoordinator {
                            RequestManager requestManager,
                            RetryExecutor retryExecutor,
                            RegionOwnershipTopology topology,
+                           SingleActionRequestInitiator singleActionRequestInitiator,
                            HbaseClientConfiguration config) {
         this.table = table;
         this.sender = sender;
         this.requestManager = requestManager;
         this.retryExecutor = retryExecutor;
         this.topology = topology;
+        this.singleActionRequestInitiator = singleActionRequestInitiator;
         this.config = config;
 
         this.currentScan = scan;
@@ -99,15 +101,8 @@ public final class ScanCoordinator {
         final OpenScannerRequestDetailProvider locationCapturingProvider =
                 new OpenScannerRequestDetailProvider(table, scan, topology);
 
-        HbaseOperationResultFuture<Long> future = new HbaseOperationResultFuture<Long>(requestManager);
-        SingleActionController.initiate(
-                locationCapturingProvider,
-                future,
-                OPEN_SCANNER_RESPONSE_PARSER,
-                sender,
-                retryExecutor,
-                config
-        );
+        ListenableFuture<Long> future = singleActionRequestInitiator.initiate(locationCapturingProvider,
+                OPEN_SCANNER_RESPONSE_PARSER);
 
         return Futures.transform(future, new Function<Long, ScannerOpenResult>() {
             @Override
@@ -142,12 +137,20 @@ public final class ScanCoordinator {
                 numResults
         });
 
-        HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>(requestManager);
+        HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>();
 
         // TODO: what happens if the server says this region is not online or something and we should go back and find
         // TODO: the updated region to issue the request to?  Somehow that will need to bubble all the way out to the
         // TODO: state holder but don't want to tie this directly into that either :(
-        ScannerNextBatchRequestResponseController.initiate(location, invocation, future, sender);
+        final ScannerNextBatchRequestResponseController controller = ScannerNextBatchRequestResponseController.initiate(
+                location, invocation, future, sender, requestManager);
+
+        future.setCancelCallback(new Runnable() {
+            @Override
+            public void run() {
+                controller.cancel();
+            }
+        });
 
         return future;
     }
@@ -192,17 +195,7 @@ public final class ScanCoordinator {
             }
         };
 
-        HbaseOperationResultFuture<Void> future = new HbaseOperationResultFuture<Void>(requestManager);
-        SingleActionController.initiate(
-                detailProvider,
-                future,
-                CLOSE_SCANNER_RESPONSE_PARSER,
-                sender,
-                retryExecutor,
-                config
-        );
-
-        return future;
+        return singleActionRequestInitiator.initiate(detailProvider, CLOSE_SCANNER_RESPONSE_PARSER);
     }
 
     public Optional<byte[]> getNextScannerStartKey() {
@@ -226,50 +219,5 @@ public final class ScanCoordinator {
 
     private boolean isBeyondScanEnd(byte[] key) {
         return scanEndRow.length > 0 && Bytes.compareTo(scanEndRow, key) <= 0;
-
-    }
-
-    private static final class OpenScannerRequestDetailProvider implements RequestDetailProvider {
-
-        private final AtomicReference<HRegionLocation> currentLocation = new AtomicReference<HRegionLocation>(null);
-
-        private final String table;
-        private final Scan scan;
-        private final RegionOwnershipTopology topology;
-
-        private OpenScannerRequestDetailProvider(String table, Scan scan, RegionOwnershipTopology topology) {
-            this.table = table;
-            this.scan = scan;
-            this.topology = topology;
-        }
-
-        @Override
-        public HRegionLocation getLocation() {
-            return capture(topology.getRegionServer(table, scan.getStartRow()));
-        }
-
-        @Override
-        public HRegionLocation getRetryLocation() {
-            return capture(topology.getRegionServerNoCache(table, scan.getStartRow()));
-        }
-
-        private HRegionLocation capture(HRegionLocation location) {
-            currentLocation.set(location);
-            return location;
-        }
-
-        @Override
-        public Invocation getInvocation(HRegionLocation targetLocation) {
-            return new Invocation(OPEN_SCANNER_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {
-                    targetLocation.getRegionInfo().getRegionName(),
-                    scan
-            });
-        }
-
-        public HRegionLocation getLastRequestLocation() {
-            HRegionLocation location = currentLocation.get();
-            Preconditions.checkState(location != null);
-            return location;
-        }
     }
 }

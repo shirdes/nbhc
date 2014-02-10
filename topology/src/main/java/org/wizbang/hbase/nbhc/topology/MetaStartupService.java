@@ -8,16 +8,11 @@ import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryNTimes;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
-import org.wizbang.hbase.nbhc.RetryExecutor;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.request.OperationFutureSupplier;
-import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 
 public final class MetaStartupService extends AbstractIdleService implements HbaseMetaService {
 
-    private final RequestManager requestManager;
-    private final RequestSender sender;
-    private final RetryExecutor retryExecutor;
+    private final SingleActionRequestInitiator singleActionRequestInitiator;
     private final HbaseClientConfiguration config;
 
     private CuratorFramework curator;
@@ -25,21 +20,15 @@ public final class MetaStartupService extends AbstractIdleService implements Hba
 
     private MetaTable metaTable;
 
-    public MetaStartupService(RequestManager requestManager,
-                       RequestSender sender,
-                       RetryExecutor retryExecutor,
-                       HbaseClientConfiguration config) {
-        this.requestManager = requestManager;
-        this.sender = sender;
-        this.retryExecutor = retryExecutor;
+    public MetaStartupService(SingleActionRequestInitiator singleActionRequestInitiator,
+                              HbaseClientConfiguration config) {
+        this.singleActionRequestInitiator = singleActionRequestInitiator;
         this.config = config;
     }
 
     @Override
     protected void startUp() throws Exception {
-        OperationFutureSupplier futureSupplier = new OperationFutureSupplier(requestManager);
-
-        TopologyOperationsClient operationsClient = new TopologyOperationsClient(sender, futureSupplier, retryExecutor, config);
+        TopologyOperationsClient operationsClient = new TopologyOperationsClient(singleActionRequestInitiator, config);
         MetaTableLookupSource metaSource = new MetaTableLookupSource(operationsClient, TopologyUtil.INSTACE);
 
         Supplier<LocationCache> cacheSupplier = new Supplier<LocationCache>() {

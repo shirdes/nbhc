@@ -2,17 +2,17 @@ package org.wizbang.hbase.nbhc.netty.pipeline;
 
 import com.codahale.metrics.Meter;
 import com.google.common.base.Optional;
-import org.wizbang.hbase.nbhc.HbaseClientMetrics;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
-import org.wizbang.hbase.nbhc.netty.HostChannelProvider;
-import org.wizbang.hbase.nbhc.response.RequestResponseController;
-import org.wizbang.hbase.nbhc.response.Response;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.jboss.netty.channel.ChannelHandlerContext;
 import org.jboss.netty.channel.ExceptionEvent;
 import org.jboss.netty.channel.MessageEvent;
 import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
+import org.wizbang.hbase.nbhc.HbaseClientMetrics;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
+import org.wizbang.hbase.nbhc.netty.HostChannelProvider;
+import org.wizbang.hbase.nbhc.response.RequestResponseController;
+import org.wizbang.hbase.nbhc.response.Response;
 
 public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
 
@@ -47,13 +47,13 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
         RequestResponseController callback = lookup.get();
         switch (response.getType()) {
             case LOCAL_ERROR:
-                callback.receiveLocalError(response.getLocalError());
+                callback.receiveLocalError(response.getRequestId(), response.getLocalError());
                 break;
             case REMOTE_ERROR:
-                callback.receiveRemoteError(response.getRemoteError());
+                callback.receiveRemoteError(response.getRequestId(), response.getRemoteError());
                 break;
             case VALUE:
-                callback.receiveResponse(response.getValue());
+                callback.receiveResponse(response.getRequestId(), response.getValue());
                 break;
         }
     }

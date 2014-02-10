@@ -6,6 +6,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.ipc.RemoteException;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.response.RemoteError;
@@ -20,38 +21,47 @@ public final class ScannerNextBatchRequestResponseController implements RequestR
     private final Invocation invocation;
     private final ResultBroker<ScannerBatchResult> resultBroker;
     private final RequestSender sender;
+    private final RequestManager requestManager;
 
-    public static void initiate(HRegionLocation location,
-                                Invocation invocation,
-                                ResultBroker<ScannerBatchResult> resultBroker,
-                                RequestSender sender) {
+    private int requestId;
+
+    public static ScannerNextBatchRequestResponseController initiate(HRegionLocation location,
+                                                                     Invocation invocation,
+                                                                     ResultBroker<ScannerBatchResult> resultBroker,
+                                                                     RequestSender sender,
+                                                                     RequestManager requestManager) {
 
         ScannerNextBatchRequestResponseController controller = new ScannerNextBatchRequestResponseController(
                 location,
                 invocation,
                 resultBroker,
-                sender
+                sender,
+                requestManager
         );
 
         controller.launch();
+
+        return controller;
     }
 
-    public ScannerNextBatchRequestResponseController(HRegionLocation location,
-                                                     Invocation invocation,
-                                                     ResultBroker<ScannerBatchResult> resultBroker,
-                                                     RequestSender sender) {
+    private ScannerNextBatchRequestResponseController(HRegionLocation location,
+                                                      Invocation invocation,
+                                                      ResultBroker<ScannerBatchResult> resultBroker,
+                                                      RequestSender sender,
+                                                      RequestManager requestManager) {
         this.location = location;
         this.invocation = invocation;
         this.resultBroker = resultBroker;
         this.sender = sender;
+        this.requestManager = requestManager;
     }
 
     private void launch() {
-        sender.sendRequest(location, invocation, this);
+        requestId = sender.sendRequest(location, invocation, this);
     }
 
     @Override
-    public void receiveResponse(HbaseObjectWritable received) {
+    public void receiveResponse(int requestId, HbaseObjectWritable received) {
         Object object = received.get();
         if (object == null) {
             resultBroker.communicateResult(ScannerBatchResult.allFinished());
@@ -72,7 +82,7 @@ public final class ScannerNextBatchRequestResponseController implements RequestR
     }
 
     @Override
-    public void receiveRemoteError(RemoteError remoteError) {
+    public void receiveRemoteError(int requestId, RemoteError remoteError) {
         // TODO: need to understand error semantics like when a region moves.  How do we reopen a scanner
         // TODO: if needed?
         resultBroker.communicateError(new RemoteException(remoteError.getErrorClass(),
@@ -80,7 +90,12 @@ public final class ScannerNextBatchRequestResponseController implements RequestR
     }
 
     @Override
-    public void receiveLocalError(Throwable error) {
+    public void receiveLocalError(int requestId, Throwable error) {
         resultBroker.communicateError(error);
+    }
+
+    @Override
+    public void cancel() {
+        requestManager.unregisterResponseCallback(requestId);
     }
 }

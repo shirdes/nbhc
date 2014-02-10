@@ -11,9 +11,13 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.scan.ScannerInitiator;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
+import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 public final class ClientStartupService extends AbstractIdleService implements HbaseClientService {
 
@@ -28,8 +32,8 @@ public final class ClientStartupService extends AbstractIdleService implements H
     private HbaseClient client;
 
     public ClientStartupService(RequestManager requestManager,
-                         RegionServerDispatcherService dispatcherService,
-                         HbaseClientConfiguration config) {
+                                RegionServerDispatcherService dispatcherService,
+                                HbaseClientConfiguration config) {
         this.requestManager = requestManager;
         this.dispatcherService = dispatcherService;
         this.config = config;
@@ -44,10 +48,21 @@ public final class ClientStartupService extends AbstractIdleService implements H
         retryExecutor = new SchedulerWithWorkersRetryExecutor(config);
         retryExecutor.startAndWait();
 
-        metaService = HbaseMetaServiceFactory.create(requestManager, sender, retryExecutor, config);
+        SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
+                retryExecutor, requestManager, config);
+
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, config);
         metaService.startAndWait();
 
-        client = new HbaseClientImpl(metaService.getTopology(), sender, requestManager, retryExecutor, config);
+        RegionOwnershipTopology topology = metaService.getTopology();
+
+        MultiActionRequestInitiator multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor,
+                requestManager, topology, config);
+
+        ScannerInitiator scannerInitiator = new ScannerInitiator(sender, requestManager, retryExecutor,
+                topology, singleActionRequestInitiator, config);
+
+        client = new HbaseClientImpl(topology, singleActionRequestInitiator, multiActionRequestInitiator, scannerInitiator);
     }
 
     @Override

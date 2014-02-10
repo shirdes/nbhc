@@ -18,6 +18,7 @@ import org.junit.Test;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.netty.NettyDispatcherFactory;
 import org.wizbang.hbase.nbhc.request.RequestSender;
+import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 
@@ -60,7 +61,10 @@ public class TopologyTest {
 
         HbaseClientConfiguration clientConfig = new HbaseClientConfiguration();
 
-        metaService = HbaseMetaServiceFactory.create(requestManager, sender, new SchedulerWithWorkersRetryExecutor(clientConfig), clientConfig);
+        SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
+                new SchedulerWithWorkersRetryExecutor(clientConfig), requestManager, clientConfig);
+
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
         metaService.startAndWait();
     }
 

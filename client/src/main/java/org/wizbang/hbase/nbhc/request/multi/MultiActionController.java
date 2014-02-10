@@ -14,16 +14,22 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.ipc.RemoteException;
+import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.RetryExecutor;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
 import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
@@ -54,23 +60,42 @@ public final class MultiActionController<A extends Row> implements RequestRespon
     private final RequestSender sender;
     private final Function<HbaseObjectWritable, MultiActionResponse> parser;
     private final RetryExecutor retryExecutor;
+    private final RequestManager requestManager;
+    private final HbaseClientConfiguration config;
 
     private final Object resultGatheringLock = new Object();
 
     private final SortedMap<Integer, Result> gatheredResults = new TreeMap<Integer, Result>();
     private boolean gatheringComplete = false;
 
-    // TODO: probably protected static method for creating with passing in the parser for testing purposes
-    public static <A extends Row> void initiate(String table,
-                                                ImmutableList<A> actions,
-                                                ResultBroker<ImmutableList<Result>> resultBroker,
-                                                RegionOwnershipTopology topology,
-                                                RequestSender sender,
-                                                RetryExecutor retryExecutor) {
+    private final Set<Integer> activeRequestIds = Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
-        MultiActionController<A> controller = new MultiActionController<A>(table, actions, resultBroker, topology,
-                sender, MultiActionResponseParser.INSTANCE, retryExecutor);
-        controller.begin();
+    // TODO: probably protected static method for creating with passing in the parser for testing purposes
+    public static <A extends Row> MultiActionController<A> initiate(String table,
+                                                                    ImmutableList<A> actions,
+                                                                    ResultBroker<ImmutableList<Result>> resultBroker,
+                                                                    RegionOwnershipTopology topology,
+                                                                    RequestSender sender,
+                                                                    RetryExecutor retryExecutor,
+                                                                    RequestManager requestManager,
+                                                                    HbaseClientConfiguration config) {
+
+        MultiActionController<A> controller = new MultiActionController<A>(
+                table,
+                actions,
+                resultBroker,
+                topology,
+                sender,
+                MultiActionResponseParser.INSTANCE,
+                retryExecutor,
+                requestManager,
+                config
+        );
+
+        controller.launch();
+
+        return controller;
     }
 
     private MultiActionController(String table,
@@ -79,7 +104,9 @@ public final class MultiActionController<A extends Row> implements RequestRespon
                                   RegionOwnershipTopology topology,
                                   RequestSender sender,
                                   Function<HbaseObjectWritable, MultiActionResponse> parser,
-                                  RetryExecutor retryExecutor) {
+                                  RetryExecutor retryExecutor,
+                                  RequestManager requestManager,
+                                  HbaseClientConfiguration config) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
@@ -87,14 +114,21 @@ public final class MultiActionController<A extends Row> implements RequestRespon
         this.sender = sender;
         this.parser = parser;
         this.retryExecutor = retryExecutor;
+        this.requestManager = requestManager;
+        this.config = config;
     }
 
-    private void begin() {
+    private void launch() {
         sendActionRequests(actions, allowCachedLocationLookup);
     }
 
     @Override
-    public void receiveResponse(HbaseObjectWritable value) {
+    public void receiveResponse(int requestId, HbaseObjectWritable value) {
+        activeRequestIds.remove(requestId);
+        if (cancelled.get()) {
+            return;
+        }
+
         MultiActionResponse response = parser.apply(value);
         if (response.isErrorResponse()) {
             resultBroker.communicateError(response.getError());
@@ -105,23 +139,35 @@ public final class MultiActionController<A extends Row> implements RequestRespon
     }
 
     @Override
-    public void receiveRemoteError(RemoteError remoteError) {
+    public void receiveRemoteError(int requestId, RemoteError remoteError) {
         resultBroker.communicateError(new RemoteException(remoteError.getErrorClass(),
                 (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
     }
 
     @Override
-    public void receiveLocalError(Throwable error) {
+    public void receiveLocalError(int requestId, Throwable error) {
         resultBroker.communicateError(error);
     }
 
+    @Override
+    public void cancel() {
+        if (!cancelled.compareAndSet(false, true)) {
+            return;
+        }
+
+        for (Integer requestId : activeRequestIds) {
+            requestManager.unregisterResponseCallback(requestId);
+        }
+    }
+
     private void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
-                               ImmutableSet<Integer> retryActionIndexes) {
+                                       ImmutableSet<Integer> retryActionIndexes) {
 
         synchronized (resultGatheringLock) {
             gatheredResults.putAll(successfulResults);
         }
 
+        // TODO: How do we check for the maximum number of retries for location errors and then fail when we reach it?
         if (!retryActionIndexes.isEmpty()) {
             retry(retryActionIndexes);
         }
@@ -145,6 +191,10 @@ public final class MultiActionController<A extends Row> implements RequestRespon
     }
 
     private void retry(ImmutableSet<Integer> retryActionIndexes) {
+        if (cancelled.get()) {
+            return;
+        }
+
         // TODO: maximum number of retries allowed??
         ImmutableList.Builder<A> builder = ImmutableList.builder();
         for (Integer index : retryActionIndexes) {
@@ -168,7 +218,8 @@ public final class MultiActionController<A extends Row> implements RequestRespon
             MultiAction<A> multiAction = locationActions.get(location);
 
             Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
-            sender.sendRequest(location, invocation, this);
+            int requestId = sender.sendRequest(location, invocation, this);
+            activeRequestIds.add(requestId);
         }
     }
 

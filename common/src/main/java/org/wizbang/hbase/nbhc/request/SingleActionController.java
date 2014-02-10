@@ -11,11 +11,14 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.RetryExecutor;
+import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.RequestResponseController;
 
-// TODO: maybe we should use a builder since we have so many parameters...
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public final class SingleActionController<R> implements RequestResponseController {
 
     private static final Logger log = LogManager.getLogger(SingleActionController.class);
@@ -25,16 +28,21 @@ public final class SingleActionController<R> implements RequestResponseControlle
     private final Function<HbaseObjectWritable, R> responseParser;
     private final RequestSender sender;
     private final RetryExecutor retryExecutor;
+    private final RequestManager requestManager;
     private final HbaseClientConfiguration config;
+
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final AtomicInteger activeRequestId = new AtomicInteger();
 
     private int attempt = 0;
 
-    public static <R> void initiate(RequestDetailProvider requestDetailProvider,
-                                    ResultBroker<R> resultBroker,
-                                    Function<HbaseObjectWritable, R> responseParser,
-                                    RequestSender sender,
-                                    RetryExecutor retryExecutor,
-                                    HbaseClientConfiguration config) {
+    public static <R> SingleActionController<R> initiate(RequestDetailProvider requestDetailProvider,
+                                                         ResultBroker<R> resultBroker,
+                                                         Function<HbaseObjectWritable, R> responseParser,
+                                                         RequestSender sender,
+                                                         RetryExecutor retryExecutor,
+                                                         RequestManager requestManager,
+                                                         HbaseClientConfiguration config) {
 
         SingleActionController<R> instance = new SingleActionController<R>(
                 requestDetailProvider,
@@ -42,10 +50,13 @@ public final class SingleActionController<R> implements RequestResponseControlle
                 responseParser,
                 sender,
                 retryExecutor,
+                requestManager,
                 config
         );
 
         instance.launch();
+
+        return instance;
     }
 
     private SingleActionController(RequestDetailProvider requestDetailProvider,
@@ -53,12 +64,14 @@ public final class SingleActionController<R> implements RequestResponseControlle
                                    Function<HbaseObjectWritable, R> responseParser,
                                    RequestSender sender,
                                    RetryExecutor retryExecutor,
+                                   RequestManager requestManager,
                                    HbaseClientConfiguration config) {
         this.requestDetailProvider = requestDetailProvider;
         this.resultBroker = resultBroker;
         this.responseParser = responseParser;
         this.sender = sender;
         this.retryExecutor = retryExecutor;
+        this.requestManager = requestManager;
         this.config = config;
     }
 
@@ -67,7 +80,7 @@ public final class SingleActionController<R> implements RequestResponseControlle
     }
 
     @Override
-    public void receiveResponse(HbaseObjectWritable value) {
+    public void receiveResponse(int requestId, HbaseObjectWritable value) {
         try {
             R result = responseParser.apply(value);
             resultBroker.communicateResult(result);
@@ -78,7 +91,7 @@ public final class SingleActionController<R> implements RequestResponseControlle
     }
 
     @Override
-    public void receiveRemoteError(RemoteError remoteError) {
+    public void receiveRemoteError(int requestId, RemoteError remoteError) {
         boolean locationError = isRegionLocationError(remoteError);
         if (locationError) {
             handleLocationError(remoteError, attempt);
@@ -89,8 +102,15 @@ public final class SingleActionController<R> implements RequestResponseControlle
     }
 
     @Override
-    public void receiveLocalError(Throwable error) {
+    public void receiveLocalError(int requestId, Throwable error) {
         resultBroker.communicateError(error);
+    }
+
+    @Override
+    public void cancel() {
+        if (cancelled.compareAndSet(false, true)) {
+            requestManager.unregisterResponseCallback(activeRequestId.get());
+        }
     }
 
     private void handleLocationError(RemoteError error, int attempt) {
@@ -126,13 +146,19 @@ public final class SingleActionController<R> implements RequestResponseControlle
     }
 
     private void executeRetry() {
+        if (cancelled.get()) {
+            // TODO: metric on this?
+            return;
+        }
+
         attempt++;
         requestToLocation(requestDetailProvider.getRetryLocation());
     }
 
     private void requestToLocation(HRegionLocation location) {
         Invocation invocation = requestDetailProvider.getInvocation(location);
-        sender.sendRequest(location, invocation, this);
+        int requestId = sender.sendRequest(location, invocation, this);
+        activeRequestId.set(requestId);
     }
 
     private boolean isRegionLocationError(RemoteError error) {
