@@ -46,8 +46,8 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
 
         RequestResponseController callback = lookup.get();
         switch (response.getType()) {
-            case LOCAL_ERROR:
-                callback.receiveLocalError(response.getRequestId(), response.getLocalError());
+            case FATAL_ERROR:
+                callback.receiveFatalError(response.getRequestId(), response.getFatalError());
                 break;
             case REMOTE_ERROR:
                 callback.receiveRemoteError(response.getRequestId(), response.getRemoteError());
@@ -60,6 +60,9 @@ public class HbaseResponseHandler extends SimpleChannelUpstreamHandler {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception {
+        // TODO: would this just be a connection error of some sort?  Should it be retried?  Either way if we are
+        // TODO: removing the channel here, we should probably notify any other requests that are waiting for a response
+        // TODO: on this channel which is something that needs to be tracked somewhere :)
         log.error("Exception caught in response handler.  Removing channel.", e.getCause());
         channelProvider.removeChannel(ctx.getChannel());
     }

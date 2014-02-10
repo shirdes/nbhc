@@ -131,6 +131,7 @@ public final class MultiActionController<A extends Row> implements RequestRespon
 
         MultiActionResponse response = parser.apply(value);
         if (response.isErrorResponse()) {
+            // TODO: cancel remaining requests...
             resultBroker.communicateError(response.getError());
         }
         else {
@@ -140,12 +141,21 @@ public final class MultiActionController<A extends Row> implements RequestRespon
 
     @Override
     public void receiveRemoteError(int requestId, RemoteError remoteError) {
+        activeRequestIds.remove(requestId);
+        // TODO: cancel remaining requests
         resultBroker.communicateError(new RemoteException(remoteError.getErrorClass(),
                 (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
     }
 
     @Override
-    public void receiveLocalError(int requestId, Throwable error) {
+    public void receiveCommunicationError(int requestId, Throwable error) {
+        // TODO: implement, this should be retriable typically?
+    }
+
+    @Override
+    public void receiveFatalError(int requestId, Throwable error) {
+        activeRequestIds.remove(requestId);
+        // TODO: cancel remaining requests
         resultBroker.communicateError(error);
     }
 

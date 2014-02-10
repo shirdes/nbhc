@@ -90,7 +90,12 @@ public final class ScannerNextBatchRequestResponseController implements RequestR
     }
 
     @Override
-    public void receiveLocalError(int requestId, Throwable error) {
+    public void receiveCommunicationError(int requestId, Throwable error) {
+        // TODO: implement, this should be retriable typically?
+    }
+
+    @Override
+    public void receiveFatalError(int requestId, Throwable error) {
         resultBroker.communicateError(error);
     }
 

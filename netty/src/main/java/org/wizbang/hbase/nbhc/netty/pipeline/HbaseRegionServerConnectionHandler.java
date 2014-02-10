@@ -8,6 +8,9 @@ import org.jboss.netty.channel.ChannelHandlerContext;
 import org.jboss.netty.channel.ChannelStateEvent;
 import org.jboss.netty.channel.SimpleChannelHandler;
 
+// TODO: probably need to hold onto the request ids that are on a particular channel and then if the we get the
+// TODO: channel disconnected, we should get the controller for those request ids and issue a retriable error to
+// TODO: them.
 public final class HbaseRegionServerConnectionHandler extends SimpleChannelHandler {
 
     private static final Logger log = LogManager.getLogger(HbaseRegionServerConnectionHandler.class);

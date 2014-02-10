@@ -39,7 +39,7 @@ public final class HbaseResponseDecoder extends OneToOneDecoder {
             response = parseResponseDetail(buffer, requestId);
         }
         catch (Exception e) {
-            response = Response.newLocalError(requestId,
+            response = Response.newFatalError(requestId,
                     new RuntimeException("Error parsing response detail for request id " + requestId));
         }
 
