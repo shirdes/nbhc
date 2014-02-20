@@ -1,9 +1,11 @@
 package org.wizbang.hbase.nbhc.request.scan;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableSet;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.wizbang.hbase.nbhc.Protocol;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -47,6 +49,11 @@ public final class OpenScannerRequestDetailProvider implements RequestDetailProv
                 targetLocation.getRegionInfo().getRegionName(),
                 scan
         });
+    }
+
+    @Override
+    public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
+        return Protocol.STANDARD_REMOTE_RETRY_ERRORS;
     }
 
     public HRegionLocation getLastRequestLocation() {

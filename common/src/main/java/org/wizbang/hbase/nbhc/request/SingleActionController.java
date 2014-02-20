@@ -2,10 +2,8 @@ package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.base.Function;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
@@ -92,9 +90,8 @@ public final class SingleActionController<R> implements RequestResponseControlle
 
     @Override
     public void receiveRemoteError(int requestId, RemoteError remoteError) {
-        boolean locationError = isRegionLocationError(remoteError);
-        if (locationError) {
-            handleLocationError(remoteError, attempt);
+        if (isRetryError(remoteError)) {
+            handleRetry(remoteError, attempt);
         }
         else {
             resultBroker.communicateError(constructRemoteException(remoteError));
@@ -118,13 +115,13 @@ public final class SingleActionController<R> implements RequestResponseControlle
         }
     }
 
-    private void handleLocationError(RemoteError error, int attempt) {
-        if (attempt <= config.maxLocationErrorRetries) {
+    private void handleRetry(RemoteError error, int attempt) {
+        if (attempt <= config.maxRemoteErrorRetries) {
             retryOperation(error);
         }
         else {
             resultBroker.communicateError(new RuntimeException(
-                    String.format("Max attempts of %d for operation reached!", config.maxLocationErrorRetries),
+                    String.format("Max attempts of %d for operation reached!", config.maxRemoteErrorRetries),
                     constructRemoteException(error))
             );
         }
@@ -135,9 +132,9 @@ public final class SingleActionController<R> implements RequestResponseControlle
                 error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : "");
     }
 
-    private void retryOperation(RemoteError locationError) {
+    private void retryOperation(RemoteError remoteError) {
         if (log.isDebugEnabled()) {
-            log.debug(String.format("Attempt %d failed with a retriable region location error", attempt), constructRemoteException(locationError));
+            log.debug(String.format("Attempt %d failed with a retriable error", attempt), constructRemoteException(remoteError));
         }
 
         Runnable retry = new Runnable() {
@@ -166,8 +163,13 @@ public final class SingleActionController<R> implements RequestResponseControlle
         activeRequestId.set(requestId);
     }
 
-    private boolean isRegionLocationError(RemoteError error) {
-        return NotServingRegionException.class.getName().equals(error.getErrorClass()) ||
-                RegionServerStoppedException.class.getName().equals(error.getErrorClass());
+    private boolean isRetryError(RemoteError error) {
+        for (Class<? extends Exception> retryError : requestDetailProvider.getRemoteRetryErrors()) {
+            if (retryError.getName().equals(error.getErrorClass())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

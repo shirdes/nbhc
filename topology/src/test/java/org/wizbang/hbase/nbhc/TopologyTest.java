@@ -64,7 +64,7 @@ public class TopologyTest {
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
                 new SchedulerWithWorkersRetryExecutor(clientConfig), requestManager, clientConfig);
 
-        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();
     }
 

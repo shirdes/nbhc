@@ -3,6 +3,7 @@ package org.wizbang.hbase.nbhc;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
@@ -166,6 +167,11 @@ public class HbaseClientImpl implements HbaseClient {
             @Override
             public Invocation getInvocation(HRegionLocation targetLocation) {
                 return invocationBuilder.apply(targetLocation);
+            }
+
+            @Override
+            public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
+                return Protocol.STANDARD_REMOTE_RETRY_ERRORS;
             }
         };
 

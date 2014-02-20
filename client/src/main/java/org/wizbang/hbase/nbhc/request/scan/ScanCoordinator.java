@@ -3,22 +3,22 @@ package org.wizbang.hbase.nbhc.request.scan;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
-import org.wizbang.hbase.nbhc.RetryExecutor;
-import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
-import org.wizbang.hbase.nbhc.dispatch.RequestManager;
+import org.wizbang.hbase.nbhc.Protocol;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
-import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
@@ -34,9 +34,6 @@ public final class ScanCoordinator {
     private static final Logger log = LogManager.getLogger(ScanCoordinator.class);
 
     private final String table;
-    private final RequestSender sender;
-    private final RequestManager requestManager;
-    private final RetryExecutor retryExecutor;
     private final RegionOwnershipTopology topology;
     private final SingleActionRequestInitiator singleActionRequestInitiator;
     private final HbaseClientConfiguration config;
@@ -49,18 +46,14 @@ public final class ScanCoordinator {
 
     private boolean scannerOpen = false;
 
+    private Optional<byte[]> nextBatchRowStart = Optional.absent();
+
     public ScanCoordinator(String table,
                            Scan scan,
-                           RequestSender sender,
-                           RequestManager requestManager,
-                           RetryExecutor retryExecutor,
                            RegionOwnershipTopology topology,
                            SingleActionRequestInitiator singleActionRequestInitiator,
                            HbaseClientConfiguration config) {
         this.table = table;
-        this.sender = sender;
-        this.requestManager = requestManager;
-        this.retryExecutor = retryExecutor;
         this.topology = topology;
         this.singleActionRequestInitiator = singleActionRequestInitiator;
         this.config = config;
@@ -77,7 +70,12 @@ public final class ScanCoordinator {
             return false;
         }
 
-        currentScan.setStartRow(nextScannerStartKey.get());
+        openScannerStartingAtRow(nextScannerStartKey.get());
+        return true;
+    }
+
+    private void openScannerStartingAtRow(byte[] startRow) {
+        currentScan.setStartRow(startRow);
 
         ListenableFuture<ScannerOpenResult> future = openScanner(table, currentScan);
         try {
@@ -86,7 +84,6 @@ public final class ScanCoordinator {
             currentLocation = result.getLocation();
 
             scannerOpen = true;
-            return true;
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -115,9 +112,12 @@ public final class ScanCoordinator {
     public ScannerBatchResult loadNextBatch() {
         Preconditions.checkState(scannerOpen);
 
-        ListenableFuture<ScannerBatchResult> future = getScannerNextBatch(currentLocation, currentScannerId, config.scannerBatchSize);
+        ListenableFuture<ScannerBatchResult> future = getScannerNextBatch();
         try {
-            return future.get(config.retrieveScannerBatchTimeoutMillis, TimeUnit.MILLISECONDS);
+            ScannerBatchResult result = future.get(config.retrieveScannerBatchTimeoutMillis, TimeUnit.MILLISECONDS);
+            updateNextBatchStartState(result);
+
+            return result;
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -128,31 +128,69 @@ public final class ScanCoordinator {
         }
     }
 
-    private ListenableFuture<ScannerBatchResult> getScannerNextBatch(final HRegionLocation location,
-                                                                     long scannerId,
-                                                                     int numResults) {
+    private void updateNextBatchStartState(ScannerBatchResult result) {
+        if (result.getStatus() == ScannerBatchResult.Status.RESULTS_AVAILABLE) {
+            byte[] next = extractStartRowQueryForNextBatch(result.getResults());
+            nextBatchRowStart = Optional.of(next);
+        }
+        else {
+            nextBatchRowStart = Optional.absent();
+        }
+    }
 
-        Invocation invocation = new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
-                scannerId,
-                numResults
-        });
+    private byte[] extractStartRowQueryForNextBatch(ImmutableList<Result> results) {
+        Result last = results.get(results.size() - 1);
+        byte[] lastRow = last.getRow();
 
-        HbaseOperationResultFuture<ScannerBatchResult> future = new HbaseOperationResultFuture<ScannerBatchResult>();
+        byte[] next = new byte[lastRow.length + 1];
+        System.arraycopy(lastRow, 0, next, 0, lastRow.length);
+        next[next.length - 1] = (byte) 0;
 
-        // TODO: what happens if the server says this region is not online or something and we should go back and find
-        // TODO: the updated region to issue the request to?  Somehow that will need to bubble all the way out to the
-        // TODO: state holder but don't want to tie this directly into that either :(
-        final ScannerNextBatchRequestResponseController controller = ScannerNextBatchRequestResponseController.initiate(
-                location, invocation, future, sender, requestManager);
+        return next;
+    }
 
-        future.setCancelCallback(new Runnable() {
+    private ListenableFuture<ScannerBatchResult> getScannerNextBatch() {
+
+        RequestDetailProvider detail = new RequestDetailProvider() {
             @Override
-            public void run() {
-                controller.cancel();
+            public HRegionLocation getLocation() {
+                return currentLocation;
             }
-        });
 
-        return future;
+            @Override
+            public HRegionLocation getRetryLocation() {
+                reopenScanner();
+                return currentLocation;
+            }
+
+            @Override
+            public Invocation getInvocation(HRegionLocation targetLocation) {
+                return getNextBatchInvocation();
+            }
+
+            @Override
+            public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
+                return Protocol.SCANNER_BATCH_REMOTE_RETRY_ERRORS;
+            }
+        };
+
+        return singleActionRequestInitiator.initiate(detail, ScannerNextBatchResponseParser.INSTANCE);
+    }
+
+    private Invocation getNextBatchInvocation() {
+        return new Invocation(SCANNER_NEXT_TARGET_METHOD, TARGET_PROTOCOL, new Object[]{
+                currentScannerId,
+                config.scannerBatchSize
+        });
+    }
+
+    private void reopenScanner() {
+        if (!nextBatchRowStart.isPresent()) {
+            throw new RuntimeException("Scan sequence not in a state with a known next batch start row. Reset of scanner should not have been attempted!");
+        }
+
+        closeOpenScanner();
+        openScannerStartingAtRow(nextBatchRowStart.get());
     }
 
     public void closeOpenScanner() {
@@ -192,6 +230,11 @@ public final class ScanCoordinator {
             @Override
             public Invocation getInvocation(HRegionLocation targetLocation) {
                 return invocation;
+            }
+
+            @Override
+            public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
+                return Protocol.STANDARD_REMOTE_RETRY_ERRORS;
             }
         };
 

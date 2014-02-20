@@ -7,28 +7,24 @@ import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryNTimes;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 
 public final class MetaStartupService extends AbstractIdleService implements HbaseMetaService {
 
     private final SingleActionRequestInitiator singleActionRequestInitiator;
-    private final HbaseClientConfiguration config;
 
     private CuratorFramework curator;
     private ZookeeperHbaseClusterTopology clusterTopology;
 
     private MetaTable metaTable;
 
-    public MetaStartupService(SingleActionRequestInitiator singleActionRequestInitiator,
-                              HbaseClientConfiguration config) {
+    public MetaStartupService(SingleActionRequestInitiator singleActionRequestInitiator) {
         this.singleActionRequestInitiator = singleActionRequestInitiator;
-        this.config = config;
     }
 
     @Override
     protected void startUp() throws Exception {
-        TopologyOperationsClient operationsClient = new TopologyOperationsClient(singleActionRequestInitiator, config);
+        TopologyOperationsClient operationsClient = new TopologyOperationsClient(singleActionRequestInitiator);
         MetaTableLookupSource metaSource = new MetaTableLookupSource(operationsClient, TopologyUtil.INSTACE);
 
         Supplier<LocationCache> cacheSupplier = new Supplier<LocationCache>() {

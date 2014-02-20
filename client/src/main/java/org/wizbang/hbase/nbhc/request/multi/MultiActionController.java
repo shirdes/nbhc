@@ -14,7 +14,6 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.apache.hadoop.ipc.RemoteException;
-import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
@@ -34,9 +33,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
 import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
 
-// TODO: need to consider if we should have this class control the future that is returned for the multi action and then
-// TODO: put in place a callback on that future to handle the case where the caller determines that the requests is
-// TODO: timed out so that we can clear any outstanding callbacks??
 public final class MultiActionController<A extends Row> implements RequestResponseController {
 
     private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
@@ -61,7 +57,6 @@ public final class MultiActionController<A extends Row> implements RequestRespon
     private final Function<HbaseObjectWritable, MultiActionResponse> parser;
     private final RetryExecutor retryExecutor;
     private final RequestManager requestManager;
-    private final HbaseClientConfiguration config;
 
     private final Object resultGatheringLock = new Object();
 
@@ -78,8 +73,7 @@ public final class MultiActionController<A extends Row> implements RequestRespon
                                                                     RegionOwnershipTopology topology,
                                                                     RequestSender sender,
                                                                     RetryExecutor retryExecutor,
-                                                                    RequestManager requestManager,
-                                                                    HbaseClientConfiguration config) {
+                                                                    RequestManager requestManager) {
 
         MultiActionController<A> controller = new MultiActionController<A>(
                 table,
@@ -89,8 +83,7 @@ public final class MultiActionController<A extends Row> implements RequestRespon
                 sender,
                 MultiActionResponseParser.INSTANCE,
                 retryExecutor,
-                requestManager,
-                config
+                requestManager
         );
 
         controller.launch();
@@ -105,8 +98,7 @@ public final class MultiActionController<A extends Row> implements RequestRespon
                                   RequestSender sender,
                                   Function<HbaseObjectWritable, MultiActionResponse> parser,
                                   RetryExecutor retryExecutor,
-                                  RequestManager requestManager,
-                                  HbaseClientConfiguration config) {
+                                  RequestManager requestManager) {
         this.table = table;
         this.actions = actions;
         this.resultBroker = resultBroker;
@@ -115,7 +107,6 @@ public final class MultiActionController<A extends Row> implements RequestRespon
         this.parser = parser;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
-        this.config = config;
     }
 
     private void launch() {

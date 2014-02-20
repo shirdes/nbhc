@@ -3,26 +3,24 @@ package org.wizbang.hbase.nbhc.topology;
 import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
+import org.wizbang.hbase.nbhc.Protocol;
 import org.wizbang.hbase.nbhc.request.RequestDetailProvider;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 
 import static org.wizbang.hbase.nbhc.Protocol.*;
 
-public class TopologyOperationsClient implements TopologyOperations {
+public final class TopologyOperationsClient implements TopologyOperations {
 
     private final SingleActionRequestInitiator singleActionRequestInitiator;
-    private final HbaseClientConfiguration config;
 
-    public TopologyOperationsClient(SingleActionRequestInitiator singleActionRequestInitiator,
-                                    HbaseClientConfiguration config) {
+    public TopologyOperationsClient(SingleActionRequestInitiator singleActionRequestInitiator) {
         this.singleActionRequestInitiator = singleActionRequestInitiator;
-        this.config = config;
     }
 
     @Override
@@ -46,6 +44,11 @@ public class TopologyOperationsClient implements TopologyOperations {
                         row,
                         HConstants.CATALOG_FAMILY
                 });
+            }
+
+            @Override
+            public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
+                return Protocol.STANDARD_REMOTE_RETRY_ERRORS;
             }
         };
 

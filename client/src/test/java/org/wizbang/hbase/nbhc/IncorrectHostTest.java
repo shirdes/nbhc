@@ -71,14 +71,13 @@ public class IncorrectHostTest {
 
         singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, clientConfig);
 
-        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();
 
         multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor, requestManager,
-                metaService.getTopology(), clientConfig);
+                metaService.getTopology());
 
-        scannerInitiator = new ScannerInitiator(sender, requestManager, retryExecutor, metaService.getTopology(),
-                singleActionRequestInitiator, clientConfig);
+        scannerInitiator = new ScannerInitiator(metaService.getTopology(), singleActionRequestInitiator, clientConfig);
     }
 
     @AfterClass

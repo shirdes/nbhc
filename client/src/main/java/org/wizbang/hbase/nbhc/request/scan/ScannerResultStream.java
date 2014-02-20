@@ -7,7 +7,7 @@ import org.apache.hadoop.hbase.client.Result;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class ScannerResultStream extends AbstractIterator<Result> implements Closeable {
+public final class ScannerResultStream extends AbstractIterator<Result> implements Closeable {
 
     private final ScanCoordinator scanCoordinator;
 

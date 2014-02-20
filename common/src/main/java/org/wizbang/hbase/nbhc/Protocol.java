@@ -1,11 +1,17 @@
 package org.wizbang.hbase.nbhc;
 
 import com.google.common.base.Function;
+import com.google.common.collect.ImmutableSet;
+import org.apache.hadoop.hbase.NotServingRegionException;
+import org.apache.hadoop.hbase.UnknownScannerException;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.regionserver.LeaseException;
+import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
+import org.apache.hadoop.hdfs.server.namenode.LeaseExpiredException;
 
 import java.lang.reflect.Method;
 
@@ -52,6 +58,20 @@ public final class Protocol {
             throw new RuntimeException(String.format("Unable to load target method for '%s' operation", methodName));
         }
     }
+
+    public static final ImmutableSet<Class<? extends Exception>> STANDARD_REMOTE_RETRY_ERRORS = ImmutableSet.<Class<? extends Exception>>of(
+            NotServingRegionException.class,
+            RegionServerStoppedException.class
+    );
+
+    public static final ImmutableSet<Class<? extends Exception>> SCANNER_BATCH_REMOTE_RETRY_ERRORS = ImmutableSet.<Class<? extends Exception>>builder()
+            .add(UnknownScannerException.class)
+            .add(NotServingRegionException.class)
+            .add(RegionServerStoppedException.class)
+            .add(LeaseException.class)
+            .add(LeaseExpiredException.class)
+            .add(ScannerTimeoutException.class)
+            .build();
 
     private Protocol() { }
 

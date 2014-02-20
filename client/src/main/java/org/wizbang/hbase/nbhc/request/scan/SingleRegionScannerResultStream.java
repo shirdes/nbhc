@@ -8,7 +8,7 @@ import org.apache.hadoop.hbase.client.Result;
 
 import java.util.Queue;
 
-public class SingleRegionScannerResultStream extends AbstractIterator<Result> {
+public final class SingleRegionScannerResultStream extends AbstractIterator<Result> {
 
     private final Supplier<ScannerBatchResult> batchLoader;
 

@@ -4,7 +4,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Row;
-import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
@@ -17,18 +16,15 @@ public class MultiActionRequestInitiator {
     private final RetryExecutor retryExecutor;
     private final RequestManager requestManager;
     private final RegionOwnershipTopology topology;
-    private final HbaseClientConfiguration config;
 
     public MultiActionRequestInitiator(RequestSender sender,
                                        RetryExecutor retryExecutor,
                                        RequestManager requestManager,
-                                       RegionOwnershipTopology topology,
-                                       HbaseClientConfiguration config) {
+                                       RegionOwnershipTopology topology) {
         this.sender = sender;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
         this.topology = topology;
-        this.config = config;
     }
 
     public <A extends Row> ListenableFuture<ImmutableList<Result>> initiate(String table,
@@ -42,8 +38,7 @@ public class MultiActionRequestInitiator {
                 topology,
                 sender,
                 retryExecutor,
-                requestManager,
-                config
+                requestManager
         );
 
         future.setCancelCallback(new Runnable() {

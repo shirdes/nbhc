@@ -20,8 +20,7 @@ public final class NettyRegionServerDispatcher implements RegionServerDispatcher
 
     @Override
     public void request(HostAndPort host, Request request) {
-        Timer.Context hostTimer =
-                HbaseClientMetrics.timer("NettyRegionServerDispatcher:Host:" + host.toString()).time();
+        Timer.Context hostTimer = HbaseClientMetrics.timer("NettyRegionServerDispatcher:Host:" + host.toString()).time();
         Timer.Context time = REQUESTS_DISPATCHED_TIMER.time();
         try {
             Channel channel = channelProvider.getChannel(host);
