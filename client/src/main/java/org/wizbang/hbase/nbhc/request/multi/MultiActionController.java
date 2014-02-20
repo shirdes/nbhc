@@ -206,6 +206,7 @@ public final class MultiActionController<A extends Row> implements RequestRespon
         Runnable retry = new Runnable() {
             @Override
             public void run() {
+                // TODO: need try catch here to communicate error if it happens.
                 sendActionRequests(retryActions, forceUncachedLocationLookup);
             }
         };
