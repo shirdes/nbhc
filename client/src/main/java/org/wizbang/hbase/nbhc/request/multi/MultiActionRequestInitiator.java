@@ -163,7 +163,7 @@ public class MultiActionRequestInitiator {
         }
 
         @Override
-        public void receiveCommunicationError(int requestId, Throwable error) {
+        public void receiveLocalError(int requestId, Throwable error) {
             // TODO: implement, this should be retriable typically?
         }
 

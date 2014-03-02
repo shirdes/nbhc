@@ -153,6 +153,13 @@ public class SingleActionRequestTest {
             }
         };
 
+        ResponseExecution localErrorResponse = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveLocalError(nextInt(), new IOException("local kaboom"));
+            }
+        };
+
         ResponseExecution valueResponse = new ResponseExecution() {
             @Override
             public void respond(RequestResponseController controller) {
@@ -163,6 +170,7 @@ public class SingleActionRequestTest {
         when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), locationErrorResponse))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), unknownErrorResponse))
+                .thenAnswer(senderAnswerWithResponseExecution(nextInt(), localErrorResponse))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), valueResponse));
 
         doAnswer(delayedExecutionRetry()).when(retryExecutor).retry(Matchers.<Runnable>any());
@@ -174,9 +182,9 @@ public class SingleActionRequestTest {
         assertEquals(value, result.intValue());
 
         verify(sender).sendRequest(eq(location), eq(invocation), Matchers.<RequestResponseController>any());
-        verify(sender, times(2)).sendRequest(eq(retryLocation), eq(invocation), Matchers.<RequestResponseController>any());
+        verify(sender, times(3)).sendRequest(eq(retryLocation), eq(invocation), Matchers.<RequestResponseController>any());
 
-        verify(retryExecutor, times(2)).retry(Matchers.<Runnable>any());
+        verify(retryExecutor, times(3)).retry(Matchers.<Runnable>any());
     }
 
     @Test
@@ -201,6 +209,18 @@ public class SingleActionRequestTest {
         };
 
         testMaxErrorsReached(ioExceptionExecution, config.maxUnknownErrorRetries);
+    }
+
+    @Test
+    public void testMaxLocalErrorsReached() throws Exception {
+        ResponseExecution localErrorExecution = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveLocalError(nextInt(), new RuntimeException("wat"));
+            }
+        };
+
+        testMaxErrorsReached(localErrorExecution, config.maxUnknownErrorRetries);
     }
 
     private void testMaxErrorsReached(ResponseExecution responseExecution, int maxRetries) throws Exception {
@@ -278,7 +298,26 @@ public class SingleActionRequestTest {
     }
 
     @Test
-    public void testCancelFromTimeoutStopsFurtherRetries() throws Exception {
+    public void testCancelStopsFurtherRetriesOfRemoteError() throws Exception {
+        testRetryAbandonedWhenCancelBeforeResponseReceived(new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveRemoteError(nextInt(), new RemoteError(randomAlphabetic(10), Optional.<String>absent()));
+            }
+        });
+    }
+
+    @Test
+    public void testCancelStopsFurtherRetriesOfLocalErrors() throws Exception {
+        testRetryAbandonedWhenCancelBeforeResponseReceived(new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveLocalError(nextInt(), new RuntimeException("abandonment"));
+            }
+        });
+    }
+
+    private void testRetryAbandonedWhenCancelBeforeResponseReceived(final ResponseExecution errorExecution) throws Exception {
         RequestDetailProvider detail = detailNotExpectingRetries();
 
         final CountDownLatch timedOutLatch = new CountDownLatch(1);
@@ -294,14 +333,14 @@ public class SingleActionRequestTest {
                     return;
                 }
 
-                controller.receiveRemoteError(nextInt(), new RemoteError(randomAlphabetic(10), Optional.<String>absent()));
+                errorExecution.respond(controller);
                 responseExecutedLatch.countDown();
             }
         };
 
         int requestId = nextInt();
         when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
-            .thenAnswer(senderAnswerWithResponseExecution(requestId, waitForTimeoutResponse));
+                .thenAnswer(senderAnswerWithResponseExecution(requestId, waitForTimeoutResponse));
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
         try {
@@ -360,6 +399,114 @@ public class SingleActionRequestTest {
 
         verify(manager).unregisterResponseCallback(requestId);
         verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+    }
+
+    @Test
+    public void testFatalError() throws Exception {
+        RequestDetailProvider detail = detailNotExpectingRetries();
+
+        ResponseExecution fatalErrorExecution = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveFatalError(nextInt(), new RuntimeException("fatal"));
+            }
+        };
+
+        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+            .thenAnswer(senderAnswerWithResponseExecution(nextInt(), fatalErrorExecution));
+
+        ListenableFuture<Integer> future = initiator.initiate(detail, parser);
+
+        try {
+            future.get(10, TimeUnit.SECONDS);
+            fail();
+        }
+        catch (ExecutionException e) {
+            assertTrue(e.getCause() instanceof RuntimeException);
+            assertTrue(e.getCause().getMessage().equals("fatal"));
+        }
+
+        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+    }
+
+    @Test
+    public void testRetryRequestSendThrowsException() throws Exception {
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphabetic(10), nextInt());
+
+        when(detail.getLocation()).thenReturn(location);
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(mock(Invocation.class));
+        when(detail.getRetryLocation())
+                .thenThrow(new RuntimeException("failure of retry loc"))
+                .thenReturn(location);
+
+        ResponseExecution errorResponse = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveLocalError(nextInt(), new RuntimeException());
+            }
+        };
+
+        final int value = nextInt();
+        final HbaseObjectWritable writable = mock(HbaseObjectWritable.class);
+        when(parser.apply(Matchers.<HbaseObjectWritable>any())).thenReturn(value);
+        ResponseExecution successResponse = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveResponse(nextInt(), writable);
+            }
+        };
+
+        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+            .thenAnswer(senderAnswerWithResponseExecution(nextInt(), errorResponse))
+            .thenAnswer(senderAnswerWithResponseExecution(nextInt(), successResponse));
+
+        doAnswer(delayedExecutionRetry()).when(retryExecutor).retry(Matchers.<Runnable>any());
+
+        ListenableFuture<Integer> future = initiator.initiate(detail, parser);
+
+        Integer result = future.get(10, TimeUnit.SECONDS);
+
+        assertEquals(value, result.intValue());
+
+        verify(sender, times(2)).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(retryExecutor, times(2)).retry(Matchers.<Runnable>any());
+        verify(detail, times(2)).getRetryLocation();
+    }
+
+    @Test
+    public void testInitialLaunchExceptionRetries() throws Exception {
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphabetic(10), nextInt());
+
+        when(detail.getLocation()).thenThrow(new RuntimeException("Initial loc lookup failure"));
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(mock(Invocation.class));
+        when(detail.getRetryLocation()).thenReturn(location);
+
+        final int value = nextInt();
+        final HbaseObjectWritable writable = mock(HbaseObjectWritable.class);
+        when(parser.apply(Matchers.<HbaseObjectWritable>any())).thenReturn(value);
+        ResponseExecution successResponse = new ResponseExecution() {
+            @Override
+            public void respond(RequestResponseController controller) {
+                controller.receiveResponse(nextInt(), writable);
+            }
+        };
+
+        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+                .thenAnswer(senderAnswerWithResponseExecution(nextInt(), successResponse));
+
+        doAnswer(delayedExecutionRetry()).when(retryExecutor).retry(Matchers.<Runnable>any());
+
+        ListenableFuture<Integer> future = initiator.initiate(detail, parser);
+
+        Integer result = future.get(10, TimeUnit.SECONDS);
+
+        assertEquals(value, result.intValue());
+
+        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(retryExecutor).retry(Matchers.<Runnable>any());
+        verify(detail).getLocation();
     }
 
     private RequestDetailProvider detailNotExpectingRetries() {
