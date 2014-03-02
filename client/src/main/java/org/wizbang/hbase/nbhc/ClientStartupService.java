@@ -13,6 +13,7 @@ import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 import org.wizbang.hbase.nbhc.request.multi.MultiActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionResponseParser;
 import org.wizbang.hbase.nbhc.request.scan.ScannerInitiator;
 import org.wizbang.hbase.nbhc.request.scan.ScannerResultStream;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
@@ -57,7 +58,7 @@ public final class ClientStartupService extends AbstractIdleService implements H
         RegionOwnershipTopology topology = metaService.getTopology();
 
         MultiActionRequestInitiator multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor,
-                requestManager, topology);
+                requestManager, topology, MultiActionResponseParser.INSTANCE);
 
         ScannerInitiator scannerInitiator = new ScannerInitiator(topology, singleActionRequestInitiator, config);
 

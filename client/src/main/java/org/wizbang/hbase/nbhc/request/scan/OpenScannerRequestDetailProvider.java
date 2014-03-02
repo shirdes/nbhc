@@ -52,8 +52,8 @@ public final class OpenScannerRequestDetailProvider implements RequestDetailProv
     }
 
     @Override
-    public ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors() {
-        return Protocol.STANDARD_REMOTE_RETRY_ERRORS;
+    public ImmutableSet<Class<? extends Exception>> getLocationErrors() {
+        return Protocol.STANDARD_LOCATION_ERRORS;
     }
 
     public HRegionLocation getLastRequestLocation() {

@@ -19,6 +19,7 @@ import org.wizbang.hbase.nbhc.netty.NettyDispatcherFactory;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
 import org.wizbang.hbase.nbhc.request.multi.MultiActionRequestInitiator;
+import org.wizbang.hbase.nbhc.request.multi.MultiActionResponseParser;
 import org.wizbang.hbase.nbhc.request.scan.ScannerInitiator;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
@@ -75,7 +76,7 @@ public class IncorrectHostTest {
         metaService.startAndWait();
 
         multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor, requestManager,
-                metaService.getTopology());
+                metaService.getTopology(), MultiActionResponseParser.INSTANCE);
 
         scannerInitiator = new ScannerInitiator(metaService.getTopology(), singleActionRequestInitiator, clientConfig);
     }

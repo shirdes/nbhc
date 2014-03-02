@@ -4,7 +4,13 @@ import com.google.common.base.Function;
 import com.google.common.collect.ImmutableSet;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.UnknownScannerException;
-import org.apache.hadoop.hbase.client.*;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.MultiAction;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.ScannerTimeoutException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
@@ -59,12 +65,12 @@ public final class Protocol {
         }
     }
 
-    public static final ImmutableSet<Class<? extends Exception>> STANDARD_REMOTE_RETRY_ERRORS = ImmutableSet.<Class<? extends Exception>>of(
+    public static final ImmutableSet<Class<? extends Exception>> STANDARD_LOCATION_ERRORS = ImmutableSet.<Class<? extends Exception>>of(
             NotServingRegionException.class,
             RegionServerStoppedException.class
     );
 
-    public static final ImmutableSet<Class<? extends Exception>> SCANNER_BATCH_REMOTE_RETRY_ERRORS = ImmutableSet.<Class<? extends Exception>>builder()
+    public static final ImmutableSet<Class<? extends Exception>> SCANNER_BATCH_LOCATION_ERRORS   = ImmutableSet.<Class<? extends Exception>>builder()
             .add(UnknownScannerException.class)
             .add(NotServingRegionException.class)
             .add(RegionServerStoppedException.class)

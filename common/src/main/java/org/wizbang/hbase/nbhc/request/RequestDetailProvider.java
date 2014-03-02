@@ -12,6 +12,6 @@ public interface RequestDetailProvider {
 
     Invocation getInvocation(HRegionLocation targetLocation);
 
-    ImmutableSet<Class<? extends Exception>> getRemoteRetryErrors();
+    ImmutableSet<Class<? extends Exception>> getLocationErrors();
 
 }

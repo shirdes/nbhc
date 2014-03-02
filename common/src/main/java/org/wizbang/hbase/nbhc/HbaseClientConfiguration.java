@@ -2,7 +2,9 @@ package org.wizbang.hbase.nbhc;
 
 public final class HbaseClientConfiguration {
 
-    public final int maxRemoteErrorRetries = 3;
+    public final int maxLocationErrorRetries = 3;
+
+    public final int maxUnknownErrorRetries = 2;
 
     public final long operationRetryDelayMillis = 1000L;
 
@@ -11,4 +13,5 @@ public final class HbaseClientConfiguration {
     public long retrieveScannerBatchTimeoutMillis = 30000L;
 
     public final int scannerBatchSize = 1000;
+
 }
