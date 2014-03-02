@@ -1,6 +1,7 @@
 package org.wizbang.hbase.nbhc.request;
 
 import com.codahale.metrics.Meter;
+import com.codahale.metrics.Timer;
 import com.google.common.base.Function;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
@@ -18,23 +19,30 @@ import org.wizbang.hbase.nbhc.dispatch.ResultBroker;
 import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.RequestResponseController;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SingleActionRequestInitiator {
 
+    private static final Timer LAUNCH_DELAY_TIMER = HbaseClientMetrics.timer("Initiator:SingleAction:LaunchDelay");
+
     private final RequestSender sender;
     private final RetryExecutor retryExecutor;
     private final RequestManager requestManager;
+    private final ExecutorService workerPool;
     private final HbaseClientConfiguration config;
 
     public SingleActionRequestInitiator(RequestSender sender,
                                         RetryExecutor retryExecutor,
                                         RequestManager requestManager,
+                                        ExecutorService workerPool,
                                         HbaseClientConfiguration config) {
         this.sender = sender;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
+        this.workerPool = workerPool;
         this.config = config;
     }
 
@@ -46,11 +54,7 @@ public class SingleActionRequestInitiator {
         final SingleActionController<R> controller =new SingleActionController<R>(
                 requestDetailProvider,
                 future,
-                responseParser,
-                sender,
-                retryExecutor,
-                requestManager,
-                config
+                responseParser
         );
 
         future.setCancelCallback(new Runnable() {
@@ -60,24 +64,27 @@ public class SingleActionRequestInitiator {
             }
         });
 
-        controller.launch();
+        final long start = System.currentTimeMillis();
+        workerPool.submit(new Runnable() {
+            @Override
+            public void run() {
+                LAUNCH_DELAY_TIMER.update(System.currentTimeMillis() - start, TimeUnit.MILLISECONDS);
+                controller.launch();
+            }
+        });
 
         return future;
     }
 
-    private static final class SingleActionController<R> implements RequestResponseController {
+    private static final Logger log = LogManager.getLogger(SingleActionController.class);
 
-        private static final Logger log = LogManager.getLogger(SingleActionController.class);
+    private static final Meter ABANDONED_RETRIES_DUE_TO_CANCEL_METER = HbaseClientMetrics.meter("Controller:SingleAction:AbandonedRetriesDueToCancel");
 
-        private static final Meter ABANDONED_RETRIES_DUE_TO_CANCEL_METER = HbaseClientMetrics.meter("AbandonedRetriesDueToCancel");
+    private final class SingleActionController<R> implements RequestResponseController {
 
         private final RequestDetailProvider requestDetailProvider;
         private final ResultBroker<R> resultBroker;
         private final Function<HbaseObjectWritable, R> responseParser;
-        private final RequestSender sender;
-        private final RetryExecutor retryExecutor;
-        private final RequestManager requestManager;
-        private final HbaseClientConfiguration config;
 
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private final AtomicInteger activeRequestId = new AtomicInteger();
@@ -88,18 +95,10 @@ public class SingleActionRequestInitiator {
 
         private SingleActionController(RequestDetailProvider requestDetailProvider,
                                        ResultBroker<R> resultBroker,
-                                       Function<HbaseObjectWritable, R> responseParser,
-                                       RequestSender sender,
-                                       RetryExecutor retryExecutor,
-                                       RequestManager requestManager,
-                                       HbaseClientConfiguration config) {
+                                       Function<HbaseObjectWritable, R> responseParser) {
             this.requestDetailProvider = requestDetailProvider;
             this.resultBroker = resultBroker;
             this.responseParser = responseParser;
-            this.sender = sender;
-            this.retryExecutor = retryExecutor;
-            this.requestManager = requestManager;
-            this.config = config;
         }
 
         public void launch() {

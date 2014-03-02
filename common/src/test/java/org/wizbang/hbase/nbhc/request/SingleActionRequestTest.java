@@ -8,7 +8,9 @@ import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.mockito.Matchers;
 import org.mockito.Mock;
@@ -24,6 +26,7 @@ import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -45,13 +48,25 @@ public class SingleActionRequestTest {
 
     private SingleActionRequestInitiator initiator;
 
+    private static ExecutorService workerPool;
+
+    @BeforeClass
+    public static void setupWorkerPool() {
+        workerPool = Executors.newCachedThreadPool();
+    }
+
+    @AfterClass
+    public static void shutdownWorkerPool() {
+        workerPool.shutdownNow();
+    }
+
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
 
         config = new HbaseClientConfiguration();
 
-        initiator = new SingleActionRequestInitiator(sender, retryExecutor, manager, config);
+        initiator = new SingleActionRequestInitiator(sender, retryExecutor, manager, workerPool, config);
     }
 
     @Test

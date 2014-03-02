@@ -27,6 +27,8 @@ import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.commons.lang.RandomStringUtils.randomAlphabetic;
@@ -58,6 +60,8 @@ public class IncorrectHostTest {
     private static MultiActionRequestInitiator multiActionRequestInitiator;
     private static ScannerInitiator scannerInitiator;
 
+    private static ExecutorService workerPool;
+
     @BeforeClass
     public static void setUp() throws Exception {
         requestManager = new RequestManager();
@@ -70,7 +74,9 @@ public class IncorrectHostTest {
         clientConfig = new HbaseClientConfiguration();
         retryExecutor = new SchedulerWithWorkersRetryExecutor(clientConfig);
 
-        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, clientConfig);
+        workerPool = Executors.newCachedThreadPool();
+
+        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, workerPool, clientConfig);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();
@@ -85,6 +91,7 @@ public class IncorrectHostTest {
     public static void tearDown() throws Exception {
         metaService.stopAndWait();
         dispatcherService.stopAndWait();
+        workerPool.shutdownNow();
     }
 
     @Test

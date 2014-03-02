@@ -25,6 +25,8 @@ import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.junit.Assert.assertEquals;
 
@@ -38,6 +40,8 @@ public class TopologyTest {
     private static Configuration config;
 
     private static HbaseMetaService metaService;
+
+    private static ExecutorService workerPool;
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -61,8 +65,10 @@ public class TopologyTest {
 
         HbaseClientConfiguration clientConfig = new HbaseClientConfiguration();
 
+        workerPool = Executors.newCachedThreadPool();
+
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
-                new SchedulerWithWorkersRetryExecutor(clientConfig), requestManager, clientConfig);
+                new SchedulerWithWorkersRetryExecutor(clientConfig), requestManager, workerPool, clientConfig);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();
@@ -72,6 +78,7 @@ public class TopologyTest {
     public static void tearDown() throws Exception {
         metaService.stopAndWait();
         dispatcherService.stopAndWait();
+        workerPool.shutdownNow();
     }
 
     @Test

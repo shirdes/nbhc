@@ -4,11 +4,13 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.log4j.LogManager;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.request.RequestSender;
 import org.wizbang.hbase.nbhc.request.SingleActionRequestInitiator;
@@ -20,6 +22,9 @@ import org.wizbang.hbase.nbhc.topology.HbaseMetaService;
 import org.wizbang.hbase.nbhc.topology.HbaseMetaServiceFactory;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public final class ClientStartupService extends AbstractIdleService implements HbaseClientService {
 
     private final RequestManager requestManager;
@@ -27,6 +32,7 @@ public final class ClientStartupService extends AbstractIdleService implements H
     private final HbaseClientConfiguration config;
 
     private SchedulerWithWorkersRetryExecutor retryExecutor;
+    private ExecutorService workerPool;
 
     private HbaseMetaService metaService;
 
@@ -49,8 +55,10 @@ public final class ClientStartupService extends AbstractIdleService implements H
         retryExecutor = new SchedulerWithWorkersRetryExecutor(config);
         retryExecutor.startAndWait();
 
+        workerPool = getWorkerPool();
+
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
-                retryExecutor, requestManager, config);
+                retryExecutor, requestManager, workerPool, config);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();
@@ -65,12 +73,29 @@ public final class ClientStartupService extends AbstractIdleService implements H
         client = new HbaseClientImpl(topology, singleActionRequestInitiator, multiActionRequestInitiator, scannerInitiator);
     }
 
+    private ExecutorService getWorkerPool() {
+        return Executors.newCachedThreadPool(new ThreadFactoryBuilder()
+                .setDaemon(false)
+                .setNameFormat("Hbase Client Worker Pool Thread %d")
+                .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                    @Override
+                    public void uncaughtException(Thread t, Throwable e) {
+                        LogManager.getLogger("HbaseClient").fatal("Unhandled error caught from thread " + t.getName(), e);
+                    }
+                })
+                .build()
+        );
+    }
+
     @Override
     protected void shutDown() throws Exception {
         // TODO: is this the correct shutdown order??
         metaService.stopAndWait();
         dispatcherService.stopAndWait();
         retryExecutor.stopAndWait();
+
+        // TODO: should be cleaner
+        workerPool.shutdown();
     }
 
     @Override
