@@ -1,5 +1,7 @@
 package org.wizbang.hbase.nbhc;
 
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Timer;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -11,10 +13,22 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService implements RetryExecutor {
 
     private static final Logger log = LogManager.getLogger(SchedulerWithWorkersRetryExecutor.class);
+
+    private static final Timer ACTUAL_RETRY_DELAY_TIMER = HbaseClientMetrics.timer("RetryExecutor:ActualDelay");
+    private static final AtomicLong RETRY_QUEUE_SIZE = new AtomicLong(0L);
+    static {
+        HbaseClientMetrics.gauge("RetryExecutor:RetryQueueSize", new Gauge<Long>() {
+            @Override
+            public Long getValue() {
+                return RETRY_QUEUE_SIZE.get();
+            }
+        });
+    }
 
     private final ExecutorService workerPool;
     private final HbaseClientConfiguration config;
@@ -30,13 +44,22 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
     public void retry(final Runnable operation) {
         Preconditions.checkState(state() == State.RUNNING);
 
+        final long start = System.currentTimeMillis();
         Runnable task = new Runnable() {
             @Override
             public void run() {
-                workerPool.submit(operation);
+                RETRY_QUEUE_SIZE.decrementAndGet();
+                ACTUAL_RETRY_DELAY_TIMER.update(System.currentTimeMillis() - start, TimeUnit.MILLISECONDS);
+                try {
+                    workerPool.submit(operation);
+                }
+                catch (Throwable e) {
+                    log.fatal("Failed to submit retry operation to worker pool! The retry is being dropped!", e);
+                }
             }
         };
 
+        RETRY_QUEUE_SIZE.incrementAndGet();
         retryScheduler.schedule(task, config.operationRetryDelayMillis, TimeUnit.MILLISECONDS);
     }
 
@@ -59,7 +82,23 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
 
     @Override
     protected void shutDown() throws Exception {
-        // TODO: graceful shutdown
         retryScheduler.shutdown();
+        // At this point, any further submits for retry would fail because of state change of the service, so we should
+        // really only need to wait the retry delay time for the pool to be done. Add a little bit more just to be sure.
+        long waitMillis = config.operationRetryDelayMillis + 1000L;
+        try {
+            if (!retryScheduler.awaitTermination(waitMillis, TimeUnit.MILLISECONDS)) {
+                log.error(String.format("Retry executor service did not cleanly shutdown in %d ms. Forcing shutdown!", waitMillis));
+                retryScheduler.shutdownNow();
+                if (!retryScheduler.awaitTermination(waitMillis, TimeUnit.MILLISECONDS)) {
+                    log.fatal("Unable to force shutdown of retry executor service!");
+                }
+            }
+        }
+        catch (InterruptedException e) {
+            log.error("Interrupted waiting for retry executor service to shutdown!");
+            retryScheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
