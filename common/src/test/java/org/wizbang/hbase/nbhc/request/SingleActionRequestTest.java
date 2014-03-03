@@ -66,7 +66,7 @@ public class SingleActionRequestTest {
 
         config = new HbaseClientConfiguration();
 
-        initiator = new SingleActionRequestInitiator(sender, retryExecutor, manager, workerPool, config);
+        initiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, manager, config);
     }
 
     @Test

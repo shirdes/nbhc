@@ -30,6 +30,7 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
@@ -39,16 +40,19 @@ public class MultiActionRequestInitiator {
 
     private final RequestSender sender;
     private final RetryExecutor retryExecutor;
+    private final ExecutorService workerPool;
     private final RequestManager requestManager;
     private final RegionOwnershipTopology topology;
     private final MultiActionResponseParser responseParser;
 
     public MultiActionRequestInitiator(RequestSender sender,
+                                       ExecutorService workerPool,
                                        RetryExecutor retryExecutor,
                                        RequestManager requestManager,
                                        RegionOwnershipTopology topology,
                                        MultiActionResponseParser responseParser) {
         this.sender = sender;
+        this.workerPool = workerPool;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
         this.topology = topology;
@@ -62,12 +66,7 @@ public class MultiActionRequestInitiator {
         final MultiActionController<A> controller = new MultiActionController<A>(
                 table,
                 actions,
-                future,
-                topology,
-                sender,
-                responseParser,
-                retryExecutor,
-                requestManager
+                future
         );
 
         future.setCancelCallback(new Runnable() {
@@ -77,12 +76,17 @@ public class MultiActionRequestInitiator {
             }
         });
 
-        controller.launch();
+        workerPool.submit(new Runnable() {
+            @Override
+            public void run() {
+                controller.launch();
+            }
+        });
 
         return future;
     }
 
-    private static final class MultiActionController<A extends Row> implements RequestResponseController {
+    private final class MultiActionController<A extends Row> implements RequestResponseController {
 
         private final Function<byte[], HRegionLocation> allowCachedLocationLookup = new Function<byte[], HRegionLocation>() {
             @Override
@@ -101,11 +105,6 @@ public class MultiActionRequestInitiator {
         private final String table;
         private final ImmutableList<A> actions;
         private final ResultBroker<ImmutableList<Result>> resultBroker;
-        private final RegionOwnershipTopology topology;
-        private final RequestSender sender;
-        private final Function<HbaseObjectWritable, MultiActionResponse> parser;
-        private final RetryExecutor retryExecutor;
-        private final RequestManager requestManager;
 
         private final Object resultGatheringLock = new Object();
 
@@ -117,20 +116,10 @@ public class MultiActionRequestInitiator {
 
         private MultiActionController(String table,
                                       ImmutableList<A> actions,
-                                      ResultBroker<ImmutableList<Result>> resultBroker,
-                                      RegionOwnershipTopology topology,
-                                      RequestSender sender,
-                                      Function<HbaseObjectWritable, MultiActionResponse> parser,
-                                      RetryExecutor retryExecutor,
-                                      RequestManager requestManager) {
+                                      ResultBroker<ImmutableList<Result>> resultBroker) {
             this.table = table;
             this.actions = actions;
             this.resultBroker = resultBroker;
-            this.topology = topology;
-            this.sender = sender;
-            this.parser = parser;
-            this.retryExecutor = retryExecutor;
-            this.requestManager = requestManager;
         }
 
         private void launch() {
@@ -144,7 +133,7 @@ public class MultiActionRequestInitiator {
                 return;
             }
 
-            MultiActionResponse response = parser.apply(value);
+            MultiActionResponse response = responseParser.apply(value);
             if (response.isErrorResponse()) {
                 // TODO: cancel remaining requests...
                 resultBroker.communicateError(response.getError());

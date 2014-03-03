@@ -57,16 +57,16 @@ public final class ClientStartupService extends AbstractIdleService implements H
         retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, config);
         retryExecutor.startAndWait();
 
-        SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
-                retryExecutor, requestManager, workerPool, config);
+        SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender, workerPool,
+                retryExecutor, requestManager, config);
 
-        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, config);
         metaService.startAndWait();
 
         RegionOwnershipTopology topology = metaService.getTopology();
 
-        MultiActionRequestInitiator multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor,
-                requestManager, topology, MultiActionResponseParser.INSTANCE);
+        MultiActionRequestInitiator multiActionRequestInitiator = new MultiActionRequestInitiator(sender, workerPool,
+                retryExecutor, requestManager, topology, MultiActionResponseParser.INSTANCE);
 
         ScannerInitiator scannerInitiator = new ScannerInitiator(topology, singleActionRequestInitiator, config);
 

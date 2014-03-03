@@ -25,7 +25,6 @@ public class MetaTableLookupSource {
     public HRegionLocation getLocation(String table,
                                        byte[] row,
                                        final Function<byte[], HRegionLocation> metaLocationLookup) {
-        // TODO: cache lookup...
 
         byte[] tableNameBytes = table.getBytes(Charsets.UTF_8);
         final byte[] metaKey = HRegionInfo.createRegionName(tableNameBytes, row, HConstants.NINES, false);
@@ -51,8 +50,6 @@ public class MetaTableLookupSource {
         if (!Arrays.equals(result.getTable(), tableNameBytes)) {
             throw new RuntimeException(String.format("Table '%s' was not found, got %s", table, new String(result.getTable(), Charsets.UTF_8)));
         }
-
-        // TODO: caching?  Although if we prepopulate above, probably wouldn't need to here.
 
         return result.getLocation();
     }

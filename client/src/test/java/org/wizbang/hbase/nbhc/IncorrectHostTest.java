@@ -50,7 +50,7 @@ public class IncorrectHostTest {
 
     private static RequestManager requestManager;
     private static RequestSender sender;
-    private static RetryExecutor retryExecutor;
+    private static SchedulerWithWorkersRetryExecutor retryExecutor;
     private static HbaseClientConfiguration clientConfig;
 
     private static RegionServerDispatcherService dispatcherService;
@@ -75,13 +75,14 @@ public class IncorrectHostTest {
         workerPool = Executors.newCachedThreadPool();
 
         retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig);
+        retryExecutor.startAndWait();
 
-        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, workerPool, clientConfig);
+        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, requestManager, clientConfig);
 
-        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
+        metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
         metaService.startAndWait();
 
-        multiActionRequestInitiator = new MultiActionRequestInitiator(sender, retryExecutor, requestManager,
+        multiActionRequestInitiator = new MultiActionRequestInitiator(sender, workerPool, retryExecutor, requestManager,
                 metaService.getTopology(), MultiActionResponseParser.INSTANCE);
 
         scannerInitiator = new ScannerInitiator(metaService.getTopology(), singleActionRequestInitiator, clientConfig);
@@ -89,6 +90,7 @@ public class IncorrectHostTest {
 
     @AfterClass
     public static void tearDown() throws Exception {
+        retryExecutor.stopAndWait();
         metaService.stopAndWait();
         dispatcherService.stopAndWait();
         workerPool.shutdownNow();

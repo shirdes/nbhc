@@ -14,4 +14,5 @@ public final class HbaseClientConfiguration {
 
     public final int scannerBatchSize = 1000;
 
+    public final long topologyOperationsTimeoutMillis = 10000L;
 }

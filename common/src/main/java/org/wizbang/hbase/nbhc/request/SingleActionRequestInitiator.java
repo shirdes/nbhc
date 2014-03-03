@@ -1,5 +1,6 @@
 package org.wizbang.hbase.nbhc.request;
 
+import com.codahale.metrics.Histogram;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.Timer;
 import com.google.common.base.Function;
@@ -27,6 +28,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SingleActionRequestInitiator {
 
     private static final Timer LAUNCH_DELAY_TIMER = HbaseClientMetrics.timer("Initiator:SingleAction:LaunchDelay");
+    private static final Meter LOCAL_ERRORS_METER = HbaseClientMetrics.meter("Initiator:SingleAction:LocalErrors");
+    private static final Meter REMOTE_LOCATION_ERRORS_METER = HbaseClientMetrics.meter("Initiator:SingleAction:RemoteLocationErrors");
+    private static final Meter REMOTE_UNKNOWN_ERRORS_METER = HbaseClientMetrics.meter("Initiator:SingleAction:RemoteUnknownErrors");
+    private static final Meter FATAL_ERRORS_METER = HbaseClientMetrics.meter("Initiator:SingleAction:FatalErrors");
+    private static final Meter FULL_FAILURES_METER = HbaseClientMetrics.meter("Initiator:SingleAction:FullFailures");
+    private static final Histogram LOCATION_ERRORS_PER_FULFILLED_REQUEST = HbaseClientMetrics.histogram("Initiator:SingleAction:LocationErrorsPerFulfilledRequest");
+    private static final Histogram UNKNOWN_ERRORS_PER_FULFILLED_REQUEST = HbaseClientMetrics.histogram("Initiator:SingleAction:UnknownErrorsPerFulfilledRequest");
+    private static final Timer TIME_TO_FULFILL_REQUEST_TIMER = HbaseClientMetrics.timer("Initiator:SingleAction:TimeToFulfill");
 
     private final RequestSender sender;
     private final RetryExecutor retryExecutor;
@@ -35,9 +44,9 @@ public class SingleActionRequestInitiator {
     private final HbaseClientConfiguration config;
 
     public SingleActionRequestInitiator(RequestSender sender,
+                                        ExecutorService workerPool,
                                         RetryExecutor retryExecutor,
                                         RequestManager requestManager,
-                                        ExecutorService workerPool,
                                         HbaseClientConfiguration config) {
         this.sender = sender;
         this.retryExecutor = retryExecutor;
@@ -93,6 +102,8 @@ public class SingleActionRequestInitiator {
         private int unknownErrorCount = 0;
         private int attempt = 0;
 
+        private long launchTimestamp;
+
         private SingleActionController(RequestDetailProvider requestDetailProvider,
                                        ResultBroker<R> resultBroker,
                                        Function<HbaseObjectWritable, R> responseParser) {
@@ -102,6 +113,7 @@ public class SingleActionRequestInitiator {
         }
 
         public void launch() {
+            launchTimestamp = System.currentTimeMillis();
             try {
                 requestToLocation(requestDetailProvider.getLocation());
             }
@@ -110,24 +122,38 @@ public class SingleActionRequestInitiator {
             }
         }
 
+        private void success(R result) {
+            LOCATION_ERRORS_PER_FULFILLED_REQUEST.update(locationErrorCount);
+            UNKNOWN_ERRORS_PER_FULFILLED_REQUEST.update(unknownErrorCount);
+            TIME_TO_FULFILL_REQUEST_TIMER.update(System.currentTimeMillis() - launchTimestamp, TimeUnit.MILLISECONDS);
+
+            resultBroker.communicateResult(result);
+        }
+
+        private void failure(Throwable error) {
+            FULL_FAILURES_METER.mark();
+
+            resultBroker.communicateError(error);
+        }
+
         @Override
         public void receiveResponse(int requestId, HbaseObjectWritable value) {
             try {
                 R result = responseParser.apply(value);
-                resultBroker.communicateResult(result);
+                success(result);
             }
             catch (Exception e) {
-                resultBroker.communicateError(e);
+                failure(e);
             }
         }
 
         @Override
         public void receiveRemoteError(int requestId, RemoteError remoteError) {
+            boolean shouldRetry = shouldRetryRemoteError(remoteError);
+
             if (ignoreDueToCancel()) {
                 return;
             }
-
-            boolean shouldRetry = shouldRetryRemoteError(remoteError);
 
             if (shouldRetry) {
                 warnRemoteError(remoteError);
@@ -145,7 +171,8 @@ public class SingleActionRequestInitiator {
 
         @Override
         public void receiveFatalError(int requestId, Throwable error) {
-            resultBroker.communicateError(error);
+            FATAL_ERRORS_METER.mark();
+            failure(error);
         }
 
         @Override
@@ -192,10 +219,11 @@ public class SingleActionRequestInitiator {
 
         private void failDueToMaxStrikes(Throwable doomingError) {
             String message = "Max failure strikes reached " + getErrorsState();
-            resultBroker.communicateError(new RuntimeException(message, doomingError));
+            failure(new RuntimeException(message, doomingError));
         }
 
         private void handleLocalError(Throwable error) {
+            LOCAL_ERRORS_METER.mark();
             if (ignoreDueToCancel()) {
                 return;
             }
@@ -212,10 +240,12 @@ public class SingleActionRequestInitiator {
 
         private boolean shouldRetryRemoteError(RemoteError remoteError) {
             if (isLocationError(remoteError)) {
+                REMOTE_LOCATION_ERRORS_METER.mark();
                 locationErrorCount++;
                 return (locationErrorCount <= config.maxLocationErrorRetries);
             }
 
+            REMOTE_UNKNOWN_ERRORS_METER.mark();
             return shouldRetryUnknownError();
         }
 
