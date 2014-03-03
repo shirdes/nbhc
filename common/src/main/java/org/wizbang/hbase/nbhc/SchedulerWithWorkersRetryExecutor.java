@@ -16,12 +16,13 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
 
     private static final Logger log = LogManager.getLogger(SchedulerWithWorkersRetryExecutor.class);
 
+    private final ExecutorService workerPool;
     private final HbaseClientConfiguration config;
 
     private ScheduledExecutorService retryScheduler;
-    private ExecutorService retryWorkers;
 
-    public SchedulerWithWorkersRetryExecutor(HbaseClientConfiguration config) {
+    public SchedulerWithWorkersRetryExecutor(ExecutorService workerPool, HbaseClientConfiguration config) {
+        this.workerPool = workerPool;
         this.config = config;
     }
 
@@ -32,7 +33,7 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
         Runnable task = new Runnable() {
             @Override
             public void run() {
-                retryWorkers.submit(operation);
+                workerPool.submit(operation);
             }
         };
 
@@ -41,7 +42,6 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
 
     @Override
     protected void startUp() throws Exception {
-        retryWorkers = Executors.newCachedThreadPool(getThreadFactory("Retry Worker"));
         retryScheduler = Executors.newSingleThreadScheduledExecutor(getThreadFactory("Retry Scheduler"));
     }
 
@@ -51,7 +51,7 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
                 .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
                     @Override
                     public void uncaughtException(Thread t, Throwable e) {
-                        log.fatal("Uncaught exception from " + threadNamePrefix + " thread", e);
+                        log.fatal("Uncaught exception from " + t.getName(), e);
                     }
                 })
                 .build();
@@ -61,6 +61,5 @@ public final class SchedulerWithWorkersRetryExecutor extends AbstractIdleService
     protected void shutDown() throws Exception {
         // TODO: graceful shutdown
         retryScheduler.shutdown();
-        retryWorkers.shutdown();
     }
 }

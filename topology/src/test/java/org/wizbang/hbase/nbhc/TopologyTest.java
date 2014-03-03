@@ -68,7 +68,7 @@ public class TopologyTest {
         workerPool = Executors.newCachedThreadPool();
 
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
-                new SchedulerWithWorkersRetryExecutor(clientConfig), requestManager, workerPool, clientConfig);
+                new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig), requestManager, workerPool, clientConfig);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator);
         metaService.startAndWait();

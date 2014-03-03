@@ -72,9 +72,9 @@ public class IncorrectHostTest {
         sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
         clientConfig = new HbaseClientConfiguration();
-        retryExecutor = new SchedulerWithWorkersRetryExecutor(clientConfig);
-
         workerPool = Executors.newCachedThreadPool();
+
+        retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig);
 
         singleActionRequestInitiator = new SingleActionRequestInitiator(sender, retryExecutor, requestManager, workerPool, clientConfig);
 

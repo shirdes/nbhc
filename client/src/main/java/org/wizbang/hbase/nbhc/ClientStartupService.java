@@ -52,10 +52,10 @@ public final class ClientStartupService extends AbstractIdleService implements H
 
         RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
-        retryExecutor = new SchedulerWithWorkersRetryExecutor(config);
-        retryExecutor.startAndWait();
-
         workerPool = getWorkerPool();
+
+        retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, config);
+        retryExecutor.startAndWait();
 
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
                 retryExecutor, requestManager, workerPool, config);
