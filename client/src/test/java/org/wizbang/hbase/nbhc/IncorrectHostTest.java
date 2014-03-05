@@ -44,8 +44,8 @@ public class IncorrectHostTest {
 
     // Update this map with hosts for the instance the client is running against
     private static final Map<String, String> HOST_SWAP = ImmutableMap.of(
-            "wizbang", "linux-vm",
-            "linux-vm", "wizbang"
+            "wizbang", "rs1",
+            "rs1", "wizbang"
     );
 
     private static RequestManager requestManager;
@@ -67,7 +67,7 @@ public class IncorrectHostTest {
         requestManager = new RequestManager();
 
         dispatcherService = NettyDispatcherFactory.create(requestManager);
-        dispatcherService.startAndWait();
+        dispatcherService.startAsync().awaitRunning();
 
         sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
@@ -75,12 +75,13 @@ public class IncorrectHostTest {
         workerPool = Executors.newCachedThreadPool();
 
         retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig);
-        retryExecutor.startAndWait();
+        retryExecutor.startAsync().awaitRunning();
 
-        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, requestManager, clientConfig);
+        singleActionRequestInitiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, requestManager,
+                RemoteErrorUtil.INSTANCE, clientConfig);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
-        metaService.startAndWait();
+        metaService.startAsync().awaitRunning();
 
         multiActionRequestInitiator = new MultiActionRequestInitiator(sender, workerPool, retryExecutor, requestManager,
                 metaService.getTopology(), MultiActionResponseParser.INSTANCE);
@@ -90,9 +91,9 @@ public class IncorrectHostTest {
 
     @AfterClass
     public static void tearDown() throws Exception {
-        retryExecutor.stopAndWait();
-        metaService.stopAndWait();
-        dispatcherService.stopAndWait();
+        retryExecutor.stopAsync().awaitTerminated();
+        metaService.stopAsync().awaitTerminated();
+        dispatcherService.stopAsync().awaitTerminated();
         workerPool.shutdownNow();
     }
 

@@ -48,20 +48,20 @@ public final class ClientStartupService extends AbstractIdleService implements H
 
     @Override
     protected void startUp() throws Exception {
-        dispatcherService.startAndWait();
+        dispatcherService.startAsync().awaitRunning();
 
         RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
         workerPool = getWorkerPool();
 
         retryExecutor = new SchedulerWithWorkersRetryExecutor(workerPool, config);
-        retryExecutor.startAndWait();
+        retryExecutor.startAsync().awaitRunning();
 
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender, workerPool,
-                retryExecutor, requestManager, config);
+                retryExecutor, requestManager, RemoteErrorUtil.INSTANCE, config);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, config);
-        metaService.startAndWait();
+        metaService.startAsync().awaitRunning();
 
         RegionOwnershipTopology topology = metaService.getTopology();
 
@@ -90,9 +90,9 @@ public final class ClientStartupService extends AbstractIdleService implements H
     @Override
     protected void shutDown() throws Exception {
         // TODO: is this the correct shutdown order??
-        metaService.stopAndWait();
-        dispatcherService.stopAndWait();
-        retryExecutor.stopAndWait();
+        metaService.stopAsync().awaitTerminated();
+        dispatcherService.stopAsync().awaitTerminated();
+        retryExecutor.stopAsync().awaitTerminated();
 
         // TODO: should be cleaner
         workerPool.shutdown();

@@ -185,6 +185,9 @@ public final class ScanCoordinator {
     }
 
     private void reopenScanner() {
+        // TODO: what about the situation where, we open the scanner, and then on the first request for a batch of
+        // TODO: results, we get a retry situation? In that case, we will not have set nextBatchRowStart yet, and
+        // TODO: this would fail. Thinking we should be setting the nextBatchRowStart on a scanner open?
         if (!nextBatchRowStart.isPresent()) {
             throw new RuntimeException("Scan sequence not in a state with a known next batch start row. Reset of scanner should not have been attempted!");
         }

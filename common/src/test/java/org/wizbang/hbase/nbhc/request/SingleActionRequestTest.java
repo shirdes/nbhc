@@ -4,20 +4,24 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
+import org.apache.hadoop.ipc.RemoteException;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Matchers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
+import org.wizbang.hbase.nbhc.RemoteErrorUtil;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
 import org.wizbang.hbase.nbhc.response.RemoteError;
@@ -42,6 +46,7 @@ public class SingleActionRequestTest {
     @Mock private RequestSender sender;
     @Mock private RetryExecutor retryExecutor;
     @Mock private RequestManager manager;
+    @Mock private RemoteErrorUtil remoteErrorUtil;
     private HbaseClientConfiguration config;
 
     @Mock private Function<HbaseObjectWritable, Integer> parser;
@@ -66,7 +71,7 @@ public class SingleActionRequestTest {
 
         config = new HbaseClientConfiguration();
 
-        initiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, manager, config);
+        initiator = new SingleActionRequestInitiator(sender, workerPool, retryExecutor, manager, remoteErrorUtil, config);
     }
 
     @Test
@@ -522,6 +527,39 @@ public class SingleActionRequestTest {
         verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
         verify(retryExecutor).retry(Matchers.<Runnable>any());
         verify(detail).getLocation();
+    }
+
+    @Test
+    public void testDoNotRetryRemoteError() throws Exception {
+        class DummyDoNotRetry extends DoNotRetryIOException {}
+
+        RequestDetailProvider detail = detailNotExpectingRetries();
+
+        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+            .thenAnswer(senderAnswerWithResponseExecution(nextInt(), new ResponseExecution() {
+                @Override
+                public void respond(RequestResponseController controller) {
+                    controller.receiveRemoteError(nextInt(), new RemoteError(DummyDoNotRetry.class.getName(), Optional.<String>absent()));
+                }
+            }));
+
+        when(remoteErrorUtil.isDoNotRetryError(Matchers.<RemoteError>any())).thenReturn(true);
+        when(remoteErrorUtil.constructRemoteException(Matchers.<RemoteError>any())).thenReturn(new RemoteException(DummyDoNotRetry.class.getName(), ""));
+
+        ListenableFuture<Integer> future = initiator.initiate(detail, parser);
+
+        try {
+            future.get(10, TimeUnit.SECONDS);
+            fail();
+        }
+        catch (ExecutionException e) {
+            // Expected
+        }
+
+        ArgumentCaptor<RemoteError> errorCaptor = ArgumentCaptor.forClass(RemoteError.class);
+        verify(remoteErrorUtil).isDoNotRetryError(errorCaptor.capture());
+        assertEquals(DummyDoNotRetry.class.getName(), errorCaptor.getValue().getErrorClass());
+        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
     }
 
     private RequestDetailProvider detailNotExpectingRetries() {

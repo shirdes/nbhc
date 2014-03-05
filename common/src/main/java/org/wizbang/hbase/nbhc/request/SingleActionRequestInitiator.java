@@ -8,11 +8,11 @@ import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.apache.hadoop.ipc.RemoteException;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
 import org.wizbang.hbase.nbhc.HbaseClientMetrics;
+import org.wizbang.hbase.nbhc.RemoteErrorUtil;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
@@ -41,17 +41,20 @@ public class SingleActionRequestInitiator {
     private final RetryExecutor retryExecutor;
     private final RequestManager requestManager;
     private final ExecutorService workerPool;
+    private final RemoteErrorUtil remoteErrorUtil;
     private final HbaseClientConfiguration config;
 
     public SingleActionRequestInitiator(RequestSender sender,
                                         ExecutorService workerPool,
                                         RetryExecutor retryExecutor,
                                         RequestManager requestManager,
+                                        RemoteErrorUtil remoteErrorUtil,
                                         HbaseClientConfiguration config) {
         this.sender = sender;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
         this.workerPool = workerPool;
+        this.remoteErrorUtil = remoteErrorUtil;
         this.config = config;
     }
 
@@ -149,18 +152,22 @@ public class SingleActionRequestInitiator {
 
         @Override
         public void receiveRemoteError(int requestId, RemoteError remoteError) {
-            boolean shouldRetry = shouldRetryRemoteError(remoteError);
-
             if (ignoreDueToCancel()) {
                 return;
             }
 
+            if (remoteErrorUtil.isDoNotRetryError(remoteError)) {
+                failure(remoteErrorUtil.constructRemoteException(remoteError));
+                return;
+            }
+
+            boolean shouldRetry = shouldRetryRemoteError(remoteError);
             if (shouldRetry) {
                 warnRemoteError(remoteError);
                 retryOperation();
             }
             else {
-                failDueToMaxStrikes(constructRemoteException(remoteError));
+                failDueToMaxStrikes(remoteErrorUtil.constructRemoteException(remoteError));
             }
         }
 
@@ -258,11 +265,6 @@ public class SingleActionRequestInitiator {
             String errorMessage = remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "[none]";
             log.warn(String.format("Attempt %d failed with error class [%s] with message '%s'. Retrying. %s",
                     (attempt + 1), remoteError.getErrorClass(), errorMessage, getErrorsState()));
-        }
-
-        private RemoteException constructRemoteException(RemoteError error) {
-            return new RemoteException(error.getErrorClass(),
-                    error.getErrorMessage().isPresent() ? error.getErrorMessage().get() : "");
         }
 
         private void requestToLocation(HRegionLocation location) {

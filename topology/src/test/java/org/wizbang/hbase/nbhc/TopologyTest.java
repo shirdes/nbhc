@@ -59,7 +59,7 @@ public class TopologyTest {
         RequestManager requestManager = new RequestManager();
 
         dispatcherService = NettyDispatcherFactory.create(requestManager);
-        dispatcherService.startAndWait();
+        dispatcherService.startAsync().awaitRunning();
 
         RequestSender sender = new RequestSender(requestManager, dispatcherService.getDispatcher());
 
@@ -68,16 +68,16 @@ public class TopologyTest {
         workerPool = Executors.newCachedThreadPool();
 
         SingleActionRequestInitiator singleActionRequestInitiator = new SingleActionRequestInitiator(sender,
-                workerPool, new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig), requestManager, clientConfig);
+                workerPool, new SchedulerWithWorkersRetryExecutor(workerPool, clientConfig), requestManager, RemoteErrorUtil.INSTANCE, clientConfig);
 
         metaService = HbaseMetaServiceFactory.create(singleActionRequestInitiator, clientConfig);
-        metaService.startAndWait();
+        metaService.startAsync().awaitRunning();
     }
 
     @AfterClass
     public static void tearDown() throws Exception {
-        metaService.stopAndWait();
-        dispatcherService.stopAndWait();
+        metaService.stopAsync().awaitTerminated();
+        dispatcherService.stopAsync().awaitTerminated();
         workerPool.shutdownNow();
     }
 
