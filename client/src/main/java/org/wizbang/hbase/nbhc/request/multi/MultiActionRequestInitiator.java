@@ -2,10 +2,14 @@ package org.wizbang.hbase.nbhc.request.multi;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.collect.ContiguousSet;
+import com.google.common.collect.DiscreteDomain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Maps;
+import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Range;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Action;
@@ -24,8 +28,8 @@ import org.wizbang.hbase.nbhc.response.RemoteError;
 import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -123,7 +127,8 @@ public class MultiActionRequestInitiator {
         }
 
         private void launch() {
-            sendActionRequests(actions, allowCachedLocationLookup);
+            ContiguousSet<Integer> indexes = ContiguousSet.create(Range.closedOpen(0, actions.size()), DiscreteDomain.integers());
+            sendActionRequests(indexes, allowCachedLocationLookup);
         }
 
         @Override
@@ -154,6 +159,7 @@ public class MultiActionRequestInitiator {
         @Override
         public void receiveLocalError(int requestId, Throwable error) {
             // TODO: implement, this should be retriable typically?
+            error.printStackTrace();
         }
 
         @Override
@@ -204,33 +210,29 @@ public class MultiActionRequestInitiator {
             }
         }
 
-        private void retry(ImmutableSet<Integer> retryActionIndexes) {
+        private void retry(final ImmutableSet<Integer> retryActionIndexes) {
             if (cancelled.get()) {
                 return;
             }
 
             // TODO: maximum number of retries allowed??
-            ImmutableList.Builder<A> builder = ImmutableList.builder();
-            for (Integer index : retryActionIndexes) {
-                builder.add(actions.get(index));
-            }
 
-            final ImmutableList<A> retryActions = builder.build();
             Runnable retry = new Runnable() {
                 @Override
                 public void run() {
                     // TODO: need try catch here to communicate error if it happens.
-                    sendActionRequests(retryActions, forceUncachedLocationLookup);
+                    sendActionRequests(retryActionIndexes, forceUncachedLocationLookup);
                 }
             };
 
             retryExecutor.retry(retry);
         }
 
-        private void sendActionRequests(ImmutableList<A> sendActions, Function<byte[], HRegionLocation> locationLookup) {
-            Map<HRegionLocation, MultiAction<A>> locationActions = groupByLocation(sendActions, locationLookup);
-            for (HRegionLocation location : locationActions.keySet()) {
-                MultiAction<A> multiAction = locationActions.get(location);
+        private void sendActionRequests(ImmutableSet<Integer> indexes,
+                                        Function<byte[], HRegionLocation> locationLookup) {
+            Multimap<HRegionLocation, LocationActionIndex> regionActionIndexes = groupActionIndexesByHost(indexes, locationLookup);
+            for (HRegionLocation location : regionActionIndexes.keySet()) {
+                MultiAction<A> multiAction = createMultiAction(regionActionIndexes.get(location));
 
                 Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
                 int requestId = sender.sendRequest(location, invocation, this);
@@ -238,24 +240,38 @@ public class MultiActionRequestInitiator {
             }
         }
 
-        private Map<HRegionLocation, MultiAction<A>> groupByLocation(ImmutableList<A> actions,
-                                                                     Function<byte[], HRegionLocation> locationLookup) {
-            Map<HRegionLocation, MultiAction<A>> regionActions = Maps.newHashMap();
-            for (int i = 0; i < actions.size(); i++) {
-                A operation = actions.get(i);
-
-                HRegionLocation location = locationLookup.apply(operation.getRow());
-                MultiAction<A> regionAction = regionActions.get(location);
-                if (regionAction == null) {
-                    regionAction = new MultiAction<A>();
-                    regionActions.put(location, regionAction);
-                }
-
-                regionAction.add(location.getRegionInfo().getRegionName(), new Action<A>(operation, i));
+        private MultiAction<A> createMultiAction(Collection<LocationActionIndex> actionIndexes) {
+            MultiAction<A> multi = new MultiAction<A>();
+            for (LocationActionIndex index : actionIndexes) {
+                A action = actions.get(index.actionIndex);
+                multi.add(index.location.getRegionInfo().getRegionName(), new Action<A>(action, index.actionIndex));
             }
 
-            return regionActions;
+            return multi;
         }
 
+        private Multimap<HRegionLocation, LocationActionIndex> groupActionIndexesByHost(ImmutableSet<Integer> indexes,
+                                                                                    Function<byte[], HRegionLocation> locationLookup) {
+            Multimap<HRegionLocation, LocationActionIndex> regionActionIndexes = LinkedHashMultimap.create();
+            for (Integer index : indexes) {
+                A operation = actions.get(index);
+
+                HRegionLocation location = locationLookup.apply(operation.getRow());
+                regionActionIndexes.put(location, new LocationActionIndex(location, index));
+            }
+
+            return regionActionIndexes;
+        }
+    }
+
+    private static final class LocationActionIndex {
+
+        private final HRegionLocation location;
+        private final int actionIndex;
+
+        private LocationActionIndex(HRegionLocation location, int actionIndex) {
+            this.location = location;
+            this.actionIndex = actionIndex;
+        }
     }
 }
