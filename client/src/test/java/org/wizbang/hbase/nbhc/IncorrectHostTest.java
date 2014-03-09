@@ -84,7 +84,7 @@ public class IncorrectHostTest {
         metaService.startAsync().awaitRunning();
 
         multiActionRequestInitiator = new MultiActionRequestInitiator(sender, workerPool, retryExecutor, requestManager,
-                metaService.getTopology(), MultiActionResponseParser.INSTANCE);
+                metaService.getTopology(), MultiActionResponseParser.INSTANCE, RemoteErrorUtil.INSTANCE, clientConfig);
 
         scannerInitiator = new ScannerInitiator(metaService.getTopology(), singleActionRequestInitiator, clientConfig);
     }

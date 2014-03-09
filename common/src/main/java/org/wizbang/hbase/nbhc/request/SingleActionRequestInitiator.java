@@ -4,6 +4,7 @@ import com.codahale.metrics.Histogram;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.Timer;
 import com.google.common.base.Function;
+import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
@@ -269,7 +270,8 @@ public class SingleActionRequestInitiator {
 
         private void requestToLocation(HRegionLocation location) {
             Invocation invocation = requestDetailProvider.getInvocation(location);
-            int requestId = sender.sendRequest(location, invocation, this);
+            HostAndPort host = HostAndPort.fromParts(location.getHostname(), location.getPort());
+            int requestId = sender.sendRequest(host, invocation, this);
             activeRequestId.set(requestId);
         }
 

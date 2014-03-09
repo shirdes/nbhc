@@ -3,6 +3,7 @@ package org.wizbang.hbase.nbhc.request;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HRegionInfo;
@@ -77,28 +78,12 @@ public class SingleActionRequestTest {
     @Test
     public void testSimpleSuccessfulRequest() throws Exception {
         final Invocation invocation = mock(Invocation.class);
-        final HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphanumeric(10), nextInt(65000));
-        RequestDetailProvider detail = new RequestDetailProvider() {
-            @Override
-            public HRegionLocation getLocation() {
-                return location;
-            }
+        HostAndPort host = host();
+        final HRegionLocation location = location(host);
 
-            @Override
-            public HRegionLocation getRetryLocation() {
-                throw new UnsupportedOperationException("Should never hit this");
-            }
-
-            @Override
-            public Invocation getInvocation(HRegionLocation targetLocation) {
-                return invocation;
-            }
-
-            @Override
-            public ImmutableSet<Class<? extends Exception>> getLocationErrors() {
-                return ImmutableSet.of();
-            }
-        };
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        when(detail.getLocation()).thenReturn(location);
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(invocation);
 
         int value = nextInt();
 
@@ -113,7 +98,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
              .thenAnswer(senderAnswerWithResponseExecution(nextInt(), responseExecution));
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
@@ -122,36 +107,23 @@ public class SingleActionRequestTest {
 
         assertEquals(value, result.intValue());
 
-        verify(sender).sendRequest(eq(location), eq(invocation), Matchers.<RequestResponseController>any());
+        verify(sender).sendRequest(eq(host), eq(invocation), Matchers.<RequestResponseController>any());
         verify(parser).apply(writable);
     }
 
     @Test
     public void testErrorRetriesWithSuccess() throws Exception {
         final Invocation invocation = mock(Invocation.class);
-        final HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphanumeric(10), nextInt(65000));
-        final HRegionLocation retryLocation = new HRegionLocation(mock(HRegionInfo.class), randomAlphanumeric(10), nextInt(65000));
-        RequestDetailProvider detail = new RequestDetailProvider() {
-            @Override
-            public HRegionLocation getLocation() {
-                return location;
-            }
+        HostAndPort host = host();
+        HRegionLocation location = location(host);
+        HostAndPort retryHost = host();
+        HRegionLocation retryLocation = location(retryHost);
 
-            @Override
-            public HRegionLocation getRetryLocation() {
-                return retryLocation;
-            }
-
-            @Override
-            public Invocation getInvocation(HRegionLocation targetLocation) {
-                return invocation;
-            }
-
-            @Override
-            public ImmutableSet<Class<? extends Exception>> getLocationErrors() {
-                return ImmutableSet.<Class<? extends Exception>>of(DummyException.class);
-            }
-        };
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        when(detail.getLocation()).thenReturn(location);
+        when(detail.getRetryLocation()).thenReturn(retryLocation);
+        when(detail.getLocationErrors()).thenReturn(ImmutableSet.<Class<? extends Exception>>of(DummyException.class));
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(invocation);
 
         int value = nextInt();
 
@@ -187,7 +159,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), locationErrorResponse))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), unknownErrorResponse))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), localErrorResponse))
@@ -201,8 +173,13 @@ public class SingleActionRequestTest {
 
         assertEquals(value, result.intValue());
 
-        verify(sender).sendRequest(eq(location), eq(invocation), Matchers.<RequestResponseController>any());
-        verify(sender, times(3)).sendRequest(eq(retryLocation), eq(invocation), Matchers.<RequestResponseController>any());
+        verify(detail).getLocation();
+        verify(detail, times(3)).getRetryLocation();
+        verify(detail).getInvocation(location);
+        verify(detail, times(3)).getInvocation(retryLocation);
+
+        verify(sender).sendRequest(eq(host), eq(invocation), Matchers.<RequestResponseController>any());
+        verify(sender, times(3)).sendRequest(eq(retryHost), eq(invocation), Matchers.<RequestResponseController>any());
 
         verify(retryExecutor, times(3)).retry(Matchers.<Runnable>any());
     }
@@ -245,30 +222,16 @@ public class SingleActionRequestTest {
 
     private void testMaxErrorsReached(ResponseExecution responseExecution, int maxRetries) throws Exception {
         final Invocation invocation = mock(Invocation.class);
-        final HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphanumeric(10), nextInt(65000));
-        RequestDetailProvider detail = new RequestDetailProvider() {
-            @Override
-            public HRegionLocation getLocation() {
-                return location;
-            }
+        HostAndPort host = host();
+        HRegionLocation location = location(host);
 
-            @Override
-            public HRegionLocation getRetryLocation() {
-                return location;
-            }
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        when(detail.getLocation()).thenReturn(location);
+        when(detail.getRetryLocation()).thenReturn(location);
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(invocation);
+        when(detail.getLocationErrors()).thenReturn(ImmutableSet.<Class<? extends Exception>>of(DummyException.class));
 
-            @Override
-            public Invocation getInvocation(HRegionLocation targetLocation) {
-                return invocation;
-            }
-
-            @Override
-            public ImmutableSet<Class<? extends Exception>> getLocationErrors() {
-                return ImmutableSet.<Class<? extends Exception>>of(DummyException.class);
-            }
-        };
-
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), responseExecution));
 
         doAnswer(delayedExecutionRetry()).when(retryExecutor).retry(Matchers.<Runnable>any());
@@ -286,7 +249,9 @@ public class SingleActionRequestTest {
 
         verify(retryExecutor, times(maxRetries)).retry(Matchers.<Runnable>any());
         verify(sender, times(maxRetries + 1))
-                .sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+                .sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+
+        verify(detail, times(maxRetries)).getRetryLocation();
     }
 
     @Test
@@ -303,7 +268,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), responseExecution));
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
@@ -359,7 +324,7 @@ public class SingleActionRequestTest {
         };
 
         int requestId = nextInt();
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(requestId, waitForTimeoutResponse));
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
@@ -372,7 +337,7 @@ public class SingleActionRequestTest {
             timedOutLatch.countDown();
         }
 
-        responseExecutedLatch.await(10, TimeUnit.SECONDS);
+        assertTrue(responseExecutedLatch.await(10, TimeUnit.SECONDS));
 
         verify(manager).unregisterResponseCallback(requestId);
         verifyZeroInteractions(retryExecutor);
@@ -390,7 +355,7 @@ public class SingleActionRequestTest {
         };
 
         int requestId = nextInt();
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(requestId, waitForTimeoutResponse));
 
         final CountDownLatch retryInitiatedLatch = new CountDownLatch(1);
@@ -410,15 +375,15 @@ public class SingleActionRequestTest {
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
 
-        retryInitiatedLatch.await(10, TimeUnit.SECONDS);
+        assertTrue(retryInitiatedLatch.await(10, TimeUnit.SECONDS));
 
         future.cancel(true);
         cancelLatch.countDown();
 
-        retryDoneLatch.await();
+        assertTrue(retryDoneLatch.await(10, TimeUnit.SECONDS));
 
         verify(manager).unregisterResponseCallback(requestId);
-        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(sender).sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
     }
 
     @Test
@@ -432,7 +397,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
             .thenAnswer(senderAnswerWithResponseExecution(nextInt(), fatalErrorExecution));
 
         ListenableFuture<Integer> future = initiator.initiate(detail, parser);
@@ -446,13 +411,13 @@ public class SingleActionRequestTest {
             assertTrue(e.getCause().getMessage().equals("fatal"));
         }
 
-        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(sender).sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
     }
 
     @Test
     public void testRetryRequestSendThrowsException() throws Exception {
         RequestDetailProvider detail = mock(RequestDetailProvider.class);
-        HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphabetic(10), nextInt());
+        HRegionLocation location = location(host());
 
         when(detail.getLocation()).thenReturn(location);
         when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(mock(Invocation.class));
@@ -477,7 +442,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
             .thenAnswer(senderAnswerWithResponseExecution(nextInt(), errorResponse))
             .thenAnswer(senderAnswerWithResponseExecution(nextInt(), successResponse));
 
@@ -489,7 +454,7 @@ public class SingleActionRequestTest {
 
         assertEquals(value, result.intValue());
 
-        verify(sender, times(2)).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(sender, times(2)).sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
         verify(retryExecutor, times(2)).retry(Matchers.<Runnable>any());
         verify(detail, times(2)).getRetryLocation();
     }
@@ -497,7 +462,7 @@ public class SingleActionRequestTest {
     @Test
     public void testInitialLaunchExceptionRetries() throws Exception {
         RequestDetailProvider detail = mock(RequestDetailProvider.class);
-        HRegionLocation location = new HRegionLocation(mock(HRegionInfo.class), randomAlphabetic(10), nextInt());
+        HRegionLocation location = location(host());
 
         when(detail.getLocation()).thenThrow(new RuntimeException("Initial loc lookup failure"));
         when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(mock(Invocation.class));
@@ -513,7 +478,7 @@ public class SingleActionRequestTest {
             }
         };
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
                 .thenAnswer(senderAnswerWithResponseExecution(nextInt(), successResponse));
 
         doAnswer(delayedExecutionRetry()).when(retryExecutor).retry(Matchers.<Runnable>any());
@@ -524,7 +489,7 @@ public class SingleActionRequestTest {
 
         assertEquals(value, result.intValue());
 
-        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(sender).sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
         verify(retryExecutor).retry(Matchers.<Runnable>any());
         verify(detail).getLocation();
     }
@@ -535,7 +500,7 @@ public class SingleActionRequestTest {
 
         RequestDetailProvider detail = detailNotExpectingRetries();
 
-        when(sender.sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
+        when(sender.sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any()))
             .thenAnswer(senderAnswerWithResponseExecution(nextInt(), new ResponseExecution() {
                 @Override
                 public void respond(RequestResponseController controller) {
@@ -559,31 +524,16 @@ public class SingleActionRequestTest {
         ArgumentCaptor<RemoteError> errorCaptor = ArgumentCaptor.forClass(RemoteError.class);
         verify(remoteErrorUtil).isDoNotRetryError(errorCaptor.capture());
         assertEquals(DummyDoNotRetry.class.getName(), errorCaptor.getValue().getErrorClass());
-        verify(sender).sendRequest(Matchers.<HRegionLocation>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
+        verify(sender).sendRequest(Matchers.<HostAndPort>any(), Matchers.<Invocation>any(), Matchers.<RequestResponseController>any());
     }
 
     private RequestDetailProvider detailNotExpectingRetries() {
-        return new RequestDetailProvider() {
-            @Override
-            public HRegionLocation getLocation() {
-                return new HRegionLocation(mock(HRegionInfo.class), randomAlphanumeric(10), nextInt(65000));
-            }
+        RequestDetailProvider detail = mock(RequestDetailProvider.class);
+        when(detail.getLocation()).thenReturn(location(host()));
+        when(detail.getInvocation(Matchers.<HRegionLocation>any())).thenReturn(mock(Invocation.class));
+        when(detail.getLocationErrors()).thenReturn(ImmutableSet.<Class<? extends Exception>>of());
 
-            @Override
-            public HRegionLocation getRetryLocation() {
-                throw new UnsupportedOperationException("Should never hit this");
-            }
-
-            @Override
-            public Invocation getInvocation(HRegionLocation targetLocation) {
-                return mock(Invocation.class);
-            }
-
-            @Override
-            public ImmutableSet<Class<? extends Exception>> getLocationErrors() {
-                return ImmutableSet.of();
-            }
-        };
+        return detail;
     }
 
     private Answer delayedExecutionRetry() {
@@ -617,6 +567,14 @@ public class SingleActionRequestTest {
                 return requestId;
             }
         };
+    }
+
+    private HostAndPort host() {
+        return HostAndPort.fromParts(randomAlphanumeric(10), nextInt(65000));
+    }
+
+    private HRegionLocation location(HostAndPort host) {
+        return new HRegionLocation(mock(HRegionInfo.class), host.getHostText(), host.getPort());
     }
 
     private static final class DummyException extends Exception {}

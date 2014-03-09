@@ -66,7 +66,7 @@ public final class ClientStartupService extends AbstractIdleService implements H
         RegionOwnershipTopology topology = metaService.getTopology();
 
         MultiActionRequestInitiator multiActionRequestInitiator = new MultiActionRequestInitiator(sender, workerPool,
-                retryExecutor, requestManager, topology, MultiActionResponseParser.INSTANCE);
+                retryExecutor, requestManager, topology, MultiActionResponseParser.INSTANCE, RemoteErrorUtil.INSTANCE, config);
 
         ScannerInitiator scannerInitiator = new ScannerInitiator(topology, singleActionRequestInitiator, config);
 

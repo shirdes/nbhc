@@ -4,12 +4,14 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ContiguousSet;
 import com.google.common.collect.DiscreteDomain;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Range;
+import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.client.Action;
@@ -18,7 +20,8 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.ipc.Invocation;
-import org.apache.hadoop.ipc.RemoteException;
+import org.wizbang.hbase.nbhc.HbaseClientConfiguration;
+import org.wizbang.hbase.nbhc.RemoteErrorUtil;
 import org.wizbang.hbase.nbhc.RetryExecutor;
 import org.wizbang.hbase.nbhc.dispatch.HbaseOperationResultFuture;
 import org.wizbang.hbase.nbhc.dispatch.RequestManager;
@@ -29,13 +32,13 @@ import org.wizbang.hbase.nbhc.response.RequestResponseController;
 import org.wizbang.hbase.nbhc.topology.RegionOwnershipTopology;
 
 import java.util.Collection;
-import java.util.Collections;
-import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.wizbang.hbase.nbhc.Protocol.MULTI_ACTION_TARGET_METHOD;
 import static org.wizbang.hbase.nbhc.Protocol.TARGET_PROTOCOL;
@@ -48,19 +51,25 @@ public class MultiActionRequestInitiator {
     private final RequestManager requestManager;
     private final RegionOwnershipTopology topology;
     private final MultiActionResponseParser responseParser;
+    private final RemoteErrorUtil errorUtil;
+    private final HbaseClientConfiguration config;
 
     public MultiActionRequestInitiator(RequestSender sender,
                                        ExecutorService workerPool,
                                        RetryExecutor retryExecutor,
                                        RequestManager requestManager,
                                        RegionOwnershipTopology topology,
-                                       MultiActionResponseParser responseParser) {
+                                       MultiActionResponseParser responseParser,
+                                       RemoteErrorUtil errorUtil,
+                                       HbaseClientConfiguration config) {
         this.sender = sender;
         this.workerPool = workerPool;
         this.retryExecutor = retryExecutor;
         this.requestManager = requestManager;
         this.topology = topology;
         this.responseParser = responseParser;
+        this.errorUtil = errorUtil;
+        this.config = config;
     }
 
     public <A extends Row> ListenableFuture<ImmutableList<Result>> initiate(String table,
@@ -115,8 +124,11 @@ public class MultiActionRequestInitiator {
         private final SortedMap<Integer, Result> gatheredResults = new TreeMap<Integer, Result>();
         private boolean gatheringComplete = false;
 
-        private final Set<Integer> activeRequestIds = Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
+        private final ConcurrentMap<Integer, ActiveRequestDetail> activeRequests = new ConcurrentHashMap<Integer, ActiveRequestDetail>();
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        private final AtomicInteger locationFailures = new AtomicInteger(0);
+        private final AtomicInteger unknownFailures = new AtomicInteger(0);
 
         private MultiActionController(String table,
                                       ImmutableList<A> actions,
@@ -133,15 +145,14 @@ public class MultiActionRequestInitiator {
 
         @Override
         public void receiveResponse(int requestId, HbaseObjectWritable value) {
-            activeRequestIds.remove(requestId);
-            if (cancelled.get()) {
+            activeRequests.remove(requestId);
+            if (abandonDueToCancel()) {
                 return;
             }
 
             MultiActionResponse response = responseParser.apply(value);
             if (response.isErrorResponse()) {
-                // TODO: cancel remaining requests...
-                resultBroker.communicateError(response.getError());
+                failure(response.getError());
             }
             else {
                 processResponseResult(response.getResults(), response.getIndexesNeedingRetry());
@@ -150,23 +161,25 @@ public class MultiActionRequestInitiator {
 
         @Override
         public void receiveRemoteError(int requestId, RemoteError remoteError) {
-            activeRequestIds.remove(requestId);
-            // TODO: cancel remaining requests
-            resultBroker.communicateError(new RemoteException(remoteError.getErrorClass(),
-                    (remoteError.getErrorMessage().isPresent() ? remoteError.getErrorMessage().get() : "")));
+            // TODO: should we be retrying here?
+            // TODO: want to pass along the host the request went to in the error
+            failure(errorUtil.constructRemoteException(remoteError));
         }
 
         @Override
         public void receiveLocalError(int requestId, Throwable error) {
             // TODO: implement, this should be retriable typically?
-            error.printStackTrace();
+            ActiveRequestDetail requestDetail = activeRequests.get(requestId);
+            // TODO: don't think it could be null but...
+
+            // TODO: want to pass along the host that the request went to in the error
+            handleLocalError(requestDetail.actionIndexes, error);
         }
 
         @Override
         public void receiveFatalError(int requestId, Throwable error) {
-            activeRequestIds.remove(requestId);
-            // TODO: cancel remaining requests
-            resultBroker.communicateError(error);
+            // TODO: want to pass along the host the request went to in the error
+            failure(error);
         }
 
         @Override
@@ -175,9 +188,18 @@ public class MultiActionRequestInitiator {
                 return;
             }
 
-            for (Integer requestId : activeRequestIds) {
+            unregisterActiveRequests();
+        }
+
+        private void unregisterActiveRequests() {
+            for (Integer requestId : activeRequests.keySet()) {
                 requestManager.unregisterResponseCallback(requestId);
             }
+        }
+
+        private boolean abandonDueToCancel() {
+            // TODO: metric
+            return cancelled.get();
         }
 
         private void processResponseResult(ImmutableMap<Integer, Result> successfulResults,
@@ -210,17 +232,35 @@ public class MultiActionRequestInitiator {
             }
         }
 
+        private void handleLocalError(ImmutableSet<Integer> associatedActionIndexes,
+                                      Throwable error) {
+            if (shouldRetryUnknownError()) {
+                retry(associatedActionIndexes);
+            }
+            else {
+                failure(error);
+            }
+        }
+
+        private boolean shouldRetryUnknownError() {
+            int errors = unknownFailures.incrementAndGet();
+            return errors <= config.maxUnknownErrorRetries;
+        }
+
+        private void failure(Throwable error) {
+            // TODO: metric
+            unregisterActiveRequests();
+            resultBroker.communicateError(error);
+        }
+
         private void retry(final ImmutableSet<Integer> retryActionIndexes) {
-            if (cancelled.get()) {
+            if (abandonDueToCancel()) {
                 return;
             }
-
-            // TODO: maximum number of retries allowed??
 
             Runnable retry = new Runnable() {
                 @Override
                 public void run() {
-                    // TODO: need try catch here to communicate error if it happens.
                     sendActionRequests(retryActionIndexes, forceUncachedLocationLookup);
                 }
             };
@@ -230,13 +270,37 @@ public class MultiActionRequestInitiator {
 
         private void sendActionRequests(ImmutableSet<Integer> indexes,
                                         Function<byte[], HRegionLocation> locationLookup) {
-            Multimap<HRegionLocation, LocationActionIndex> regionActionIndexes = groupActionIndexesByHost(indexes, locationLookup);
-            for (HRegionLocation location : regionActionIndexes.keySet()) {
-                MultiAction<A> multiAction = createMultiAction(regionActionIndexes.get(location));
+            if (abandonDueToCancel()) {
+                return;
+            }
+
+            Multimap<HostAndPort, LocationActionIndex> hostLocationActionIndexes;
+            try {
+                hostLocationActionIndexes = groupActionIndexesByHost(indexes, locationLookup);
+            }
+            catch (Exception e) {
+                handleLocalError(indexes, e);
+                return;
+            }
+
+            for (HostAndPort host : hostLocationActionIndexes.keySet()) {
+                Collection<LocationActionIndex> actionIndexes = hostLocationActionIndexes.get(host);
+                MultiAction<A> multiAction = createMultiAction(actionIndexes);
+
+                indexes = FluentIterable.from(actionIndexes).transform(INDEX_EXTRACTOR).toSet();
 
                 Invocation invocation = new Invocation(MULTI_ACTION_TARGET_METHOD, TARGET_PROTOCOL, new Object[] {multiAction});
-                int requestId = sender.sendRequest(location, invocation, this);
-                activeRequestIds.add(requestId);
+                int requestId;
+                try {
+                    requestId = sender.sendRequest(host, invocation, this);
+                }
+                catch (Exception e) {
+                    handleLocalError(indexes, e);
+                    continue;
+                }
+
+                indexes = FluentIterable.from(actionIndexes).transform(INDEX_EXTRACTOR).toSet();
+                activeRequests.put(requestId, new ActiveRequestDetail(host, indexes));
             }
         }
 
@@ -250,19 +314,27 @@ public class MultiActionRequestInitiator {
             return multi;
         }
 
-        private Multimap<HRegionLocation, LocationActionIndex> groupActionIndexesByHost(ImmutableSet<Integer> indexes,
+        private Multimap<HostAndPort, LocationActionIndex> groupActionIndexesByHost(ImmutableSet<Integer> indexes,
                                                                                     Function<byte[], HRegionLocation> locationLookup) {
-            Multimap<HRegionLocation, LocationActionIndex> regionActionIndexes = LinkedHashMultimap.create();
+            Multimap<HostAndPort, LocationActionIndex> regionActionIndexes = LinkedHashMultimap.create();
             for (Integer index : indexes) {
                 A operation = actions.get(index);
 
                 HRegionLocation location = locationLookup.apply(operation.getRow());
-                regionActionIndexes.put(location, new LocationActionIndex(location, index));
+                HostAndPort host = HostAndPort.fromParts(location.getHostname(), location.getPort());
+                regionActionIndexes.put(host, new LocationActionIndex(location, index));
             }
 
             return regionActionIndexes;
         }
     }
+
+    private static final Function<LocationActionIndex, Integer> INDEX_EXTRACTOR = new Function<LocationActionIndex, Integer>() {
+        @Override
+        public Integer apply(LocationActionIndex index) {
+            return index.actionIndex;
+        }
+    };
 
     private static final class LocationActionIndex {
 
@@ -272,6 +344,17 @@ public class MultiActionRequestInitiator {
         private LocationActionIndex(HRegionLocation location, int actionIndex) {
             this.location = location;
             this.actionIndex = actionIndex;
+        }
+    }
+
+    private static final class ActiveRequestDetail {
+
+        private final HostAndPort host;
+        private final ImmutableSet<Integer> actionIndexes;
+
+        private ActiveRequestDetail(HostAndPort host, ImmutableSet<Integer> actionIndexes) {
+            this.host = host;
+            this.actionIndexes = actionIndexes;
         }
     }
 }

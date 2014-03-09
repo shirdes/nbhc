@@ -1,8 +1,6 @@
 package org.wizbang.hbase.nbhc.request;
 
 import com.google.common.net.HostAndPort;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.ipc.Invocation;
 import org.junit.Before;
 import org.junit.Test;
@@ -34,25 +32,42 @@ public class RequestSenderTest {
     }
 
     @Test
-    public void testSendRequest() throws Exception {
-        String host = randomAlphabetic(10);
-        int port = nextInt(60000);
-        HRegionLocation loc = new HRegionLocation(mock(HRegionInfo.class), host, port);
+    public void testSendToLocation() throws Exception {
+        HostAndPort host = HostAndPort.fromParts(randomAlphabetic(10), nextInt(60000));
         Invocation invocation = mock(Invocation.class);
         RequestResponseController controller = mock(RequestResponseController.class);
 
         int id = nextInt();
         when(manager.registerController(Matchers.<RequestResponseController>any())).thenReturn(id);
 
-        int result = sender.sendRequest(loc, invocation, controller);
+        int result = sender.sendRequest(host, invocation, controller);
+
+        verify(manager).registerController(controller);
+        ArgumentCaptor<Request> requestCaptor = ArgumentCaptor.forClass(Request.class);
+        verify(dispatcher).request(eq(host), requestCaptor.capture());
+
+        assertEquals(invocation, requestCaptor.getValue().getInvocation());
+        assertEquals(id, result);
+        assertEquals(id, requestCaptor.getValue().getRequestId());
+    }
+
+    @Test
+    public void testSendToHost() throws Exception {
+        HostAndPort host = HostAndPort.fromParts(randomAlphabetic(10), nextInt(60000));
+        Invocation invocation = mock(Invocation.class);
+        RequestResponseController controller = mock(RequestResponseController.class);
+
+        int id = nextInt();
+        when(manager.registerController(Matchers.<RequestResponseController>any())).thenReturn(id);
+
+        int result = sender.sendRequest(host, invocation, controller);
 
         verify(manager).registerController(controller);
         ArgumentCaptor<HostAndPort> hostCaptor = ArgumentCaptor.forClass(HostAndPort.class);
         ArgumentCaptor<Request> requestCaptor = ArgumentCaptor.forClass(Request.class);
         verify(dispatcher).request(hostCaptor.capture(), requestCaptor.capture());
 
-        assertEquals(host, hostCaptor.getValue().getHostText());
-        assertEquals(port, hostCaptor.getValue().getPort());
+        assertEquals(host, hostCaptor.getValue());
         assertEquals(invocation, requestCaptor.getValue().getInvocation());
         assertEquals(id, result);
         assertEquals(id, requestCaptor.getValue().getRequestId());
